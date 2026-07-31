@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -150,6 +151,41 @@ class ResumeSection(StrictModel):
     title: NonEmptyString
     items: Annotated[list[ResumeItem], Field(min_length=1)]
     source_block_ids: list[str]
+
+    @model_validator(mode="before")
+    @classmethod
+    def derive_source_id_union(cls, value: object) -> object:
+        """Derive section evidence IDs from item evidence without mutating input."""
+
+        if not isinstance(value, Mapping):
+            return value
+        items = value.get("items")
+        if not isinstance(items, list):
+            return value
+
+        ordered_ids: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            if isinstance(item, ResumeItem):
+                source_ids: object = item.source_block_ids
+            elif isinstance(item, Mapping):
+                source_ids = item.get("source_block_ids")
+            else:
+                return value
+            if not isinstance(source_ids, list):
+                return value
+
+            for block_id in source_ids:
+                if not isinstance(block_id, str) or not block_id.strip():
+                    return value
+                normalized_id = block_id.strip()
+                if normalized_id not in seen:
+                    seen.add(normalized_id)
+                    ordered_ids.append(normalized_id)
+
+        normalized_value = dict(value)
+        normalized_value["source_block_ids"] = ordered_ids
+        return normalized_value
 
     @field_validator("source_block_ids", mode="before")
     @classmethod

@@ -20,6 +20,12 @@
 - Deterministic preservation of model-omitted, valid source blocks as unchanged
   `unclassified_content`, without an additional model call.
 - Continued rejection of unknown source-block IDs before deterministic recovery.
+- Deterministic derivation of each `ResumeSection.source_block_ids` aggregate from
+  its item-level evidence IDs.
+- Incorrect or missing DeepSeek section-level evidence aggregates no longer fail
+  an otherwise valid resume optimization response.
+- Continued preservation of item-level source-block IDs for subsequent strict
+  evidence validation.
 - Required requirement ID manifests with exact assessment count, uniqueness, and
   input-order constraints for DeepSeek match analysis.
 - Safe model JSON and Pydantic failure diagnostics with response-model names and

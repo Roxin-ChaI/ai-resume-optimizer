@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -400,6 +401,144 @@ def test_resume_section_accepts_correct_ordered_union() -> None:
     assert section.source_block_ids == ["block-2", "block-1", "block-3"]
 
 
+def test_resume_section_adds_item_ids_missing_from_supplied_union() -> None:
+    section = ResumeSection(
+        section_type="experience",
+        title="Experience",
+        items=[
+            make_item(source_block_ids=["block-0001"]),
+            make_item(source_block_ids=["block-0002"]),
+        ],
+        source_block_ids=["block-0001"],
+    )
+
+    assert section.source_block_ids == ["block-0001", "block-0002"]
+
+
+def test_resume_section_removes_ids_absent_from_items() -> None:
+    section = ResumeSection(
+        section_type="experience",
+        title="Experience",
+        items=[make_item(source_block_ids=["block-0001"])],
+        source_block_ids=["block-0001", "block-9999"],
+    )
+
+    assert section.source_block_ids == ["block-0001"]
+
+
+def test_resume_section_corrects_union_order_from_items() -> None:
+    section = ResumeSection(
+        section_type="experience",
+        title="Experience",
+        items=[
+            make_item(source_block_ids=["block-0003", "block-0004"]),
+            make_item(source_block_ids=["block-0004", "block-0001"]),
+        ],
+        source_block_ids=["block-0001", "block-0003", "block-0004"],
+    )
+
+    assert section.source_block_ids == ["block-0003", "block-0004", "block-0001"]
+
+
+def test_resume_section_deduplicates_union_in_first_seen_order() -> None:
+    section = ResumeSection(
+        section_type="experience",
+        title="Experience",
+        items=[
+            make_item(source_block_ids=["block-0002", "block-0001"]),
+            make_item(source_block_ids=["block-0001", "block-0002", "block-0003"]),
+        ],
+        source_block_ids=[],
+    )
+
+    assert section.source_block_ids == ["block-0002", "block-0001", "block-0003"]
+
+
+def test_resume_section_derives_union_when_field_is_missing() -> None:
+    section = ResumeSection.model_validate(
+        {
+            "section_type": "experience",
+            "title": "Experience",
+            "items": [make_item().model_dump()],
+        }
+    )
+
+    assert section.source_block_ids == ["block-0001"]
+
+
+def test_resume_section_derivation_does_not_mutate_input_dictionary() -> None:
+    data = {
+        "section_type": "experience",
+        "title": "Experience",
+        "items": [
+            make_item(source_block_ids=["block-0002", "block-0001"]).model_dump(),
+            make_item(source_block_ids=["block-0001", "block-0003"]).model_dump(),
+        ],
+        "source_block_ids": ["incorrect-block"],
+    }
+    before = deepcopy(data)
+
+    section = ResumeSection.model_validate(data)
+
+    assert data == before
+    assert section.source_block_ids == ["block-0002", "block-0001", "block-0003"]
+
+
+def test_resume_section_derives_union_from_resume_item_instances() -> None:
+    first = make_item(source_block_ids=["block-0003", "block-0004"])
+    second = make_item(source_block_ids=["block-0004", "block-0001"])
+
+    section = ResumeSection.model_validate(
+        {
+            "section_type": "experience",
+            "title": "Experience",
+            "items": [first, second],
+            "source_block_ids": ["incorrect-block"],
+        }
+    )
+
+    assert section.items == [first, second]
+    assert section.source_block_ids == ["block-0003", "block-0004", "block-0001"]
+
+
+def test_resume_section_preserves_unknown_item_id_in_derived_union() -> None:
+    section = ResumeSection(
+        section_type="experience",
+        title="Experience",
+        items=[make_item(source_block_ids=["block-0001", "block-9999"])],
+        source_block_ids=["block-0001"],
+    )
+
+    assert section.items[0].source_block_ids == ["block-0001", "block-9999"]
+    assert section.source_block_ids == ["block-0001", "block-9999"]
+
+
+def test_resume_section_invalid_item_source_ids_use_pydantic_error() -> None:
+    with pytest.raises(ValidationError) as raised:
+        ResumeSection.model_validate(
+            {
+                "section_type": "experience",
+                "title": "Experience",
+                "items": [
+                    {
+                        "text": "Example item",
+                        "source_block_ids": "block-0001",
+                        "related_requirement_ids": [],
+                        "needs_review": False,
+                        "review_note": None,
+                    }
+                ],
+                "source_block_ids": ["block-0001"],
+            }
+        )
+
+    assert raised.value.errors(include_input=False)[0]["loc"] == (
+        "items",
+        0,
+        "source_block_ids",
+    )
+
+
 def test_resume_section_rejects_empty_items() -> None:
     with pytest.raises(ValidationError):
         ResumeSection(
@@ -410,14 +549,15 @@ def test_resume_section_rejects_empty_items() -> None:
         )
 
 
-def test_resume_section_rejects_incorrect_source_union() -> None:
-    with pytest.raises(ValidationError):
-        ResumeSection(
-            section_type="experience",
-            title="Experience",
-            items=[make_item()],
-            source_block_ids=["block-other"],
-        )
+def test_resume_section_after_validator_defends_internal_invariant() -> None:
+    section = make_section()
+    section.source_block_ids = ["block-other"]
+
+    with pytest.raises(
+        ValueError,
+        match="source_block_ids must equal the ordered union",
+    ):
+        section.validate_source_id_union()
 
 
 def test_structured_resume_accepts_sections_or_unclassified_content() -> None:

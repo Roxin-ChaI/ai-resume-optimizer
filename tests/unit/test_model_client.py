@@ -20,7 +20,12 @@ from pydantic import BaseModel, ValidationError
 from ai_resume_optimizer.config import DEEPSEEK_BASE_URL, DEFAULT_DEEPSEEK_MODEL
 from ai_resume_optimizer.exceptions import ModelCallError, ModelOutputError
 from ai_resume_optimizer.model_client import DeepSeekModelClient, ModelClient
-from ai_resume_optimizer.models import JobProfile, JobRequirement, StructuredResume
+from ai_resume_optimizer.models import (
+    JobProfile,
+    JobRequirement,
+    OptimizedResume,
+    StructuredResume,
+)
 from tests.fakes import FakeModelClient
 
 
@@ -216,6 +221,115 @@ def test_generate_structured_uses_chat_json_output_and_local_validation() -> Non
     ):
         assert forbidden not in call_arguments
     assert not hasattr(injected, "responses") or not injected.responses.called
+
+
+def test_generate_structured_normalizes_optimized_resume_section_source_ids() -> None:
+    content = json.dumps(
+        {
+            "sections": [
+                {
+                    "section_type": "experience",
+                    "title": "Experience",
+                    "items": [
+                        {
+                            "text": "Example experience",
+                            "source_block_ids": ["block-0003", "block-0004"],
+                            "related_requirement_ids": ["requirement-0001"],
+                            "needs_review": False,
+                            "review_note": None,
+                        },
+                        {
+                            "text": "Example result",
+                            "source_block_ids": ["block-0004", "block-0001"],
+                            "related_requirement_ids": [],
+                            "needs_review": False,
+                            "review_note": None,
+                        },
+                    ],
+                    "source_block_ids": ["block-9999"],
+                },
+                {
+                    "section_type": "projects",
+                    "title": "Projects",
+                    "items": [
+                        {
+                            "text": "Example project",
+                            "source_block_ids": ["block-0006", "block-0005"],
+                            "related_requirement_ids": [],
+                            "needs_review": True,
+                            "review_note": "Review this fictitious wording.",
+                        }
+                    ],
+                    "source_block_ids": ["block-0005", "block-0006"],
+                },
+            ],
+            "pending_user_inputs": [],
+            "warnings": [],
+        }
+    )
+    injected = _injected_client(_response(content))
+
+    actual = _client(injected).generate_structured(
+        instructions="Optimize.",
+        input_text="Fictitious resume input",
+        response_model=OptimizedResume,
+    )
+
+    assert [section.source_block_ids for section in actual.sections] == [
+        ["block-0003", "block-0004", "block-0001"],
+        ["block-0006", "block-0005"],
+    ]
+    assert [item.text for item in actual.sections[0].items] == [
+        "Example experience",
+        "Example result",
+    ]
+    assert [item.source_block_ids for item in actual.sections[0].items] == [
+        ["block-0003", "block-0004"],
+        ["block-0004", "block-0001"],
+    ]
+    assert actual.sections[1].items[0].text == "Example project"
+    assert actual.sections[1].items[0].source_block_ids == [
+        "block-0006",
+        "block-0005",
+    ]
+    injected.chat.completions.create.assert_called_once()
+
+
+def test_generate_structured_normalizes_structured_resume_section_source_ids() -> None:
+    content = json.dumps(
+        {
+            "sections": [
+                {
+                    "section_type": "skills",
+                    "title": "Skills",
+                    "items": [
+                        {
+                            "text": "Example skill",
+                            "source_block_ids": ["block-0002", "block-0001"],
+                            "related_requirement_ids": [],
+                            "needs_review": False,
+                            "review_note": None,
+                        }
+                    ],
+                    "source_block_ids": ["block-0001"],
+                }
+            ],
+            "unclassified_content": [],
+            "warnings": [],
+        }
+    )
+    injected = _injected_client(_response(content))
+
+    actual = _client(injected).generate_structured(
+        instructions="Structure.",
+        input_text="Fictitious resume input",
+        response_model=StructuredResume,
+    )
+
+    assert actual.sections[0].source_block_ids == ["block-0002", "block-0001"]
+    assert actual.sections[0].items[0].source_block_ids == ["block-0002", "block-0001"]
+    assert actual.sections[0].items[0].text == "Example skill"
+    injected.chat.completions.create.assert_called_once()
 
 
 @pytest.mark.parametrize(("instructions", "input_text"), [("", "x"), ("x", "  ")])
