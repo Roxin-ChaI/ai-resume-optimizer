@@ -6,6 +6,10 @@ import hashlib
 import re
 from pathlib import Path
 
+import pytest
+
+from ai_resume_optimizer.config import load_settings
+from ai_resume_optimizer.exceptions import ConfigurationError
 from ai_resume_optimizer.parsers import parse_resume
 from ai_resume_optimizer.parsers.job_description import read_job_description
 
@@ -71,7 +75,10 @@ def test_readmes_are_bilingual_accurate_and_safe() -> None:
     assert "pip install ai-resume-optimizer" not in combined
 
 
-def test_environment_example_contains_only_approved_variables() -> None:
+def test_environment_example_contains_only_approved_variables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert (PROJECT_ROOT / ".env.example").is_file()
     env_example = _read(".env.example")
     assignments = [
         line.strip()
@@ -89,7 +96,15 @@ def test_environment_example_contains_only_approved_variables() -> None:
     assert float(parsed["DEEPSEEK_TIMEOUT_SECONDS"]) > 0
     assert "OPENAI_" not in env_example
     assert not SECRET_PATTERN.search(env_example)
-    assert not (PROJECT_ROOT / ".env").exists()
+
+    for name in parsed:
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(ConfigurationError, match="DEEPSEEK_API_KEY"):
+        load_settings()
+
+
+def test_gitignore_excludes_local_environment_file() -> None:
+    assert (PROJECT_ROOT / ".gitignore").is_file()
 
     ignore_lines = {
         line.strip()
