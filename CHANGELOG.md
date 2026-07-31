@@ -17,6 +17,8 @@
 - Source-block evidence links and blocking of unsupported requirement claims.
 - Required source-block ID manifests and exact input/output coverage constraints for
   DeepSeek resume structuring.
+- Required requirement ID manifests with exact assessment count, uniqueness, and
+  input-order constraints for DeepSeek match analysis.
 - Deterministic checks for new numbers, new dates, and misplaced placeholders.
 - Human-review markers for significant rewrites.
 - Qualitative ratings only, with no ATS percentage score.

@@ -185,6 +185,26 @@ def _validate_match_analysis(
         )
 
 
+def _build_match_analysis_input(
+    structured_resume: StructuredResume,
+    job_profile: JobProfile,
+) -> str:
+    required_ids = [requirement.requirement_id for requirement in job_profile.requirements]
+    match_input = {
+        "structured_resume": structured_resume.model_dump(mode="json"),
+        "job_profile": job_profile.model_dump(mode="json"),
+    }
+    return "\n".join(
+        [
+            f"REQUIRED_REQUIREMENT_COUNT: {len(required_ids)}",
+            "REQUIRED_REQUIREMENT_IDS:",
+            json.dumps(required_ids, ensure_ascii=False),
+            "MATCH_INPUT:",
+            json.dumps(match_input, ensure_ascii=False),
+        ]
+    )
+
+
 def analyze_match(
     model_client: ModelClient,
     structured_resume: StructuredResume,
@@ -192,13 +212,9 @@ def analyze_match(
 ) -> MatchAnalysis:
     """Analyze resume evidence against every job requirement."""
 
-    input_data = {
-        "structured_resume": structured_resume.model_dump(mode="json"),
-        "job_profile": job_profile.model_dump(mode="json"),
-    }
     result = model_client.generate_structured(
         instructions=load_prompt("analyze_match.txt"),
-        input_text=json.dumps(input_data, ensure_ascii=False),
+        input_text=_build_match_analysis_input(structured_resume, job_profile),
         response_model=MatchAnalysis,
     )
     _validate_match_analysis(structured_resume, job_profile, result)

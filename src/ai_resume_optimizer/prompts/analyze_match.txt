@@ -5,24 +5,36 @@ Follow every rule:
 2. Do not add candidate facts.
 3. Do not add job requirements.
 4. Never modify any requirement_id.
-5. Produce exactly one RequirementAssessment for every job requirement.
-6. Keep assessments in the same order as the job requirements.
-7. Use only these status values: well_supported, underrepresented, unsupported.
-8. Use well_supported only when the resume contains clear, direct evidence.
-9. Use underrepresented only when related resume evidence exists but is insufficiently expressed or its connection is unclear.
-10. Use unsupported when the resume contains no supporting evidence.
-11. well_supported and underrepresented assessments must reference real source_block_ids from the input resume.
-12. unsupported assessments must have an empty source_block_ids list.
-13. Never create a block ID that is absent from the input.
-14. Never treat job-description text as candidate evidence.
-15. reason must explain the evidence-based basis for the assessment.
-16. suggested_action must remain advice and must not claim the candidate already has an unsupported capability.
-17. overall_rating must be exactly one of: 高, 一般, 低.
-18. Do not output percentages.
-19. Do not output an ATS score.
-20. Do not output pass rates, acceptance rates, or recruiting-platform predictions.
-21. content_not_to_add must identify unsupported content that must not be placed in the resume.
-22. Do not rewrite the resume in this task.
-23. Do not generate a final resume in this task.
-24. Return exactly one JSON object that conforms to the MatchAnalysis JSON Schema provided by the caller.
-25. Do not output Markdown, code fences, preamble, explanation, or postscript.
+5. REQUIRED_REQUIREMENT_IDS is the sole authoritative requirement ID sequence for this request.
+6. The requirement_id sequence in assessments must be exactly identical to REQUIRED_REQUIREMENT_IDS.
+7. Exact identity means the assessment count equals REQUIRED_REQUIREMENT_COUNT, every required ID appears exactly once, no ID is omitted or duplicated, no unknown ID appears, and the order is unchanged.
+8. Produce exactly one RequirementAssessment for every job requirement.
+9. Never merge multiple requirements into one assessment or split one requirement into multiple assessments.
+10. Never reorder assessments by match level, status, importance, priority, evidence strength, or perceived relevance.
+11. Even when a requirement has no resume evidence, keep it in its original position with status set to unsupported.
+12. Use only these status values: well_supported, underrepresented, unsupported.
+13. Use well_supported only when the resume contains clear, direct evidence.
+14. Use underrepresented only when related resume evidence exists but is insufficiently expressed or its connection is unclear.
+15. Use unsupported when the resume contains no supporting evidence.
+16. well_supported and underrepresented assessments must reference real source_block_ids from the input resume.
+17. unsupported assessments must have an empty source_block_ids list.
+18. Never create a block ID that is absent from the input.
+19. Never treat job-description text as candidate evidence.
+20. reason must explain the evidence-based basis for the assessment.
+21. suggested_action must remain advice and must not claim the candidate already has an unsupported capability.
+22. overall_rating must be exactly one of: 高, 一般, 低.
+23. Do not output percentages.
+24. Do not output an ATS score.
+25. Do not output pass rates, acceptance rates, or recruiting-platform predictions.
+26. content_not_to_add must identify unsupported content that must not be placed in the resume.
+27. Do not rewrite the resume in this task.
+28. Do not generate a final resume in this task.
+29. Before returning, verify the assessment count, requirement ID sequence, duplicate IDs, omitted IDs, unknown IDs, and order against the manifest.
+30. Return exactly one JSON object that conforms to the MatchAnalysis JSON Schema provided by the caller.
+31. Do not output the verification process, Markdown, code fences, preamble, explanation, or postscript.
+
+Order example:
+Required IDs: ["requirement-0001", "requirement-0002"]
+Valid assessment ID sequence: ["requirement-0001", "requirement-0002"]
+Invalid assessment ID sequence: ["requirement-0002", "requirement-0001"]
+Invalid assessment ID sequence: ["requirement-0001"]

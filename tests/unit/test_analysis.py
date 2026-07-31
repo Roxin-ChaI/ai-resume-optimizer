@@ -76,6 +76,16 @@ def _parse_structure_resume_input(input_text: str) -> tuple[int, list[str], dict
     return count, required_ids, source_data
 
 
+def _parse_match_analysis_input(input_text: str) -> tuple[int, list[str], dict[str, object]]:
+    manifest_text, match_text = input_text.split("MATCH_INPUT:\n", maxsplit=1)
+    manifest_lines = manifest_text.splitlines()
+    count = int(manifest_lines[0].removeprefix("REQUIRED_REQUIREMENT_COUNT: "))
+    assert manifest_lines[1] == "REQUIRED_REQUIREMENT_IDS:"
+    required_ids = json.loads(manifest_lines[2])
+    match_input = json.loads(match_text)
+    return count, required_ids, match_input
+
+
 def _resume_item(
     text: str,
     block_ids: list[str],
@@ -711,13 +721,106 @@ def test_analyze_match_sends_ordered_safe_json_and_returns_result(
     call = client.calls[0]
     assert call.response_model is MatchAnalysis
     assert call.instructions == load_prompt("analyze_match.txt")
-    payload = json.loads(call.input_text)
+    count, required_ids, payload = _parse_match_analysis_input(call.input_text)
+    assert count == 2
+    assert required_ids == ["requirement-0001", "requirement-0002"]
     assert list(payload) == ["structured_resume", "job_profile"]
     assert [section["title"] for section in payload["structured_resume"]["sections"]] == ["Skills"]
     assert [
         requirement["requirement_id"] for requirement in payload["job_profile"]["requirements"]
     ] == ["requirement-0001", "requirement-0002"]
+    assert [assessment.requirement_id for assessment in actual.assessments] == required_ids
+    assert actual.assessments[1].status == "unsupported"
     assert str(tmp_path) not in call.input_text
+
+
+def test_analyze_match_manifest_preserves_three_requirements_in_original_order() -> None:
+    requirements = [
+        JobRequirement(
+            requirement_id="requirement-0001",
+            category="core_skill",
+            description="Example skill A",
+            importance="required",
+            source_excerpt="Example skill A",
+        ),
+        JobRequirement(
+            requirement_id="requirement-0002",
+            category="preferred_skill",
+            description="Example skill B",
+            importance="preferred",
+            source_excerpt="Example skill B",
+        ),
+        JobRequirement(
+            requirement_id="requirement-0003",
+            category="responsibility",
+            description="Example responsibility",
+            importance="contextual",
+            source_excerpt="Example responsibility",
+        ),
+    ]
+    job_profile = _job_profile(requirements)
+    assessments = [
+        RequirementAssessment(
+            requirement_id="requirement-0001",
+            status="well_supported",
+            source_block_ids=["block-0002"],
+            reason="Direct evidence.",
+            suggested_action="Keep it visible.",
+        ),
+        RequirementAssessment(
+            requirement_id="requirement-0002",
+            status="unsupported",
+            source_block_ids=[],
+            reason="No evidence.",
+            suggested_action="Do not add it.",
+        ),
+        RequirementAssessment(
+            requirement_id="requirement-0003",
+            status="underrepresented",
+            source_block_ids=["block-0002"],
+            reason="Related evidence.",
+            suggested_action="Clarify it.",
+        ),
+    ]
+    expected = _match_analysis(assessments)
+    client = FakeModelClient({MatchAnalysis: expected})
+
+    actual = analyze_match(client, _structured_resume(), job_profile)
+
+    assert actual is expected
+    assert len(client.calls) == 1
+    input_text = client.calls[0].input_text
+    count, required_ids, match_input = _parse_match_analysis_input(input_text)
+    assert count == len(requirements)
+    assert required_ids == [requirement.requirement_id for requirement in requirements]
+    assert match_input == {
+        "structured_resume": _structured_resume().model_dump(mode="json"),
+        "job_profile": job_profile.model_dump(mode="json"),
+    }
+    manifest_text = input_text.split("MATCH_INPUT:\n", maxsplit=1)[0]
+    assert all(requirement.description not in manifest_text for requirement in requirements)
+
+
+def test_analyze_match_prompt_requires_exact_manifest_sequence() -> None:
+    client = FakeModelClient({MatchAnalysis: _match_analysis()})
+
+    analyze_match(client, _structured_resume(), _job_profile())
+
+    assert len(client.calls) == 1
+    instructions = client.calls[0].instructions
+    for required_phrase in (
+        "sole authoritative requirement ID sequence",
+        "must be exactly identical",
+        "assessment count equals REQUIRED_REQUIREMENT_COUNT",
+        "no ID is omitted or duplicated",
+        "no unknown ID appears",
+        "Never reorder assessments",
+        "original position with status set to unsupported",
+        "Never merge multiple requirements",
+        "split one requirement into multiple assessments",
+        "verify the assessment count, requirement ID sequence",
+    ):
+        assert required_phrase in instructions
 
 
 @pytest.mark.parametrize(
@@ -784,6 +887,7 @@ def test_analyze_match_rejects_missing_unknown_or_reordered_assessments(
     assert [
         assessment.requirement_id for assessment in client.responses[MatchAnalysis].assessments
     ] == [assessment.requirement_id for assessment in assessments]
+    assert len(client.calls) == 1
 
 
 def test_analyze_match_rejects_duplicate_assessment_ids() -> None:
@@ -806,12 +910,11 @@ def test_analyze_match_rejects_duplicate_assessment_ids() -> None:
         ]
     )
 
+    client = FakeModelClient({MatchAnalysis: duplicate})
+
     with pytest.raises(ModelOutputError):
-        analyze_match(
-            FakeModelClient({MatchAnalysis: duplicate}),
-            _structured_resume(),
-            _job_profile(),
-        )
+        analyze_match(client, _structured_resume(), _job_profile())
+    assert len(client.calls) == 1
 
 
 def test_analyze_match_accepts_section_and_unclassified_block_evidence() -> None:
