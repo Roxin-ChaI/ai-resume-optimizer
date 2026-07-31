@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 import json
+import re
 
 from ai_resume_optimizer.exceptions import ModelOutputError
 from ai_resume_optimizer.model_client import ModelClient
 from ai_resume_optimizer.models import (
     ExtractedResume,
     JobProfile,
+    MatchAnalysis,
+    OptimizedResume,
     ResumeItem,
     StructuredResume,
 )
 from ai_resume_optimizer.prompts import load_prompt
+
+_NUMERIC_SCORE_PATTERN = re.compile(r"(?<!\d)\d+(?:\.\d+)?\s*%")
+_ATS_SCORE_PATTERN = re.compile(r"ATS\s*score|ATS\s*分数", re.IGNORECASE)
+_PREDICTION_PATTERN = re.compile(r"通过率|录取率|招聘平台评分")
 
 
 def _iter_items(structured_resume: StructuredResume) -> list[ResumeItem]:
@@ -117,4 +124,137 @@ def analyze_job(job_description: str, model_client: ModelClient) -> JobProfile:
         response_model=JobProfile,
     )
     _validate_job_profile(normalized_description, result)
+    return result
+
+
+def _structured_source_block_ids(structured_resume: StructuredResume) -> set[str]:
+    return {
+        block_id for item in _iter_items(structured_resume) for block_id in item.source_block_ids
+    }
+
+
+def _validate_assessment_coverage(
+    job_profile: JobProfile,
+    match_analysis: MatchAnalysis,
+) -> None:
+    expected_ids = [requirement.requirement_id for requirement in job_profile.requirements]
+    actual_ids = [assessment.requirement_id for assessment in match_analysis.assessments]
+    if actual_ids != expected_ids:
+        raise ModelOutputError(
+            "Match assessments must cover every job requirement exactly once and in order."
+        )
+
+
+def _validate_match_analysis(
+    structured_resume: StructuredResume,
+    job_profile: JobProfile,
+    match_analysis: MatchAnalysis,
+) -> None:
+    _validate_assessment_coverage(job_profile, match_analysis)
+    valid_block_ids = _structured_source_block_ids(structured_resume)
+    for assessment in match_analysis.assessments:
+        for block_id in assessment.source_block_ids:
+            if block_id not in valid_block_ids:
+                raise ModelOutputError(
+                    f"Match assessment {assessment.requirement_id!r} references "
+                    f"unknown source block ID {block_id!r}."
+                )
+
+    evaluation = match_analysis.overall_evaluation
+    if (
+        _NUMERIC_SCORE_PATTERN.search(evaluation)
+        or _ATS_SCORE_PATTERN.search(evaluation)
+        or _PREDICTION_PATTERN.search(evaluation)
+    ):
+        raise ModelOutputError(
+            "The overall match evaluation must not contain a numeric score, "
+            "ATS score, or recruiting prediction."
+        )
+
+
+def analyze_match(
+    model_client: ModelClient,
+    structured_resume: StructuredResume,
+    job_profile: JobProfile,
+) -> MatchAnalysis:
+    """Analyze resume evidence against every job requirement."""
+
+    input_data = {
+        "structured_resume": structured_resume.model_dump(mode="json"),
+        "job_profile": job_profile.model_dump(mode="json"),
+    }
+    result = model_client.generate_structured(
+        instructions=load_prompt("analyze_match.txt"),
+        input_text=json.dumps(input_data, ensure_ascii=False),
+        response_model=MatchAnalysis,
+    )
+    _validate_match_analysis(structured_resume, job_profile, result)
+    return result
+
+
+def _validate_optimized_resume_relationships(
+    structured_resume: StructuredResume,
+    job_profile: JobProfile,
+    match_analysis: MatchAnalysis,
+    optimized_resume: OptimizedResume,
+) -> None:
+    valid_block_ids = _structured_source_block_ids(structured_resume)
+    valid_requirement_ids = {requirement.requirement_id for requirement in job_profile.requirements}
+    unsupported_ids = {
+        assessment.requirement_id
+        for assessment in match_analysis.assessments
+        if assessment.status == "unsupported"
+    }
+
+    for section in optimized_resume.sections:
+        for block_id in section.source_block_ids:
+            if block_id not in valid_block_ids:
+                raise ModelOutputError(
+                    f"Optimized resume references unknown source block ID {block_id!r}."
+                )
+        for item in section.items:
+            for block_id in item.source_block_ids:
+                if block_id not in valid_block_ids:
+                    raise ModelOutputError(
+                        f"Optimized resume references unknown source block ID {block_id!r}."
+                    )
+            for requirement_id in item.related_requirement_ids:
+                if requirement_id not in valid_requirement_ids:
+                    raise ModelOutputError(
+                        f"Optimized resume references unknown requirement ID {requirement_id!r}."
+                    )
+                if requirement_id in unsupported_ids:
+                    raise ModelOutputError(
+                        f"Optimized resume references unsupported requirement {requirement_id!r}."
+                    )
+
+    if any(not item.strip() for item in optimized_resume.pending_user_inputs):
+        raise ModelOutputError("Pending user inputs must not contain blank entries.")
+
+
+def optimize_resume(
+    model_client: ModelClient,
+    structured_resume: StructuredResume,
+    job_profile: JobProfile,
+    match_analysis: MatchAnalysis,
+) -> OptimizedResume:
+    """Produce an evidence-linked optimized resume representation."""
+
+    _validate_assessment_coverage(job_profile, match_analysis)
+    input_data = {
+        "structured_resume": structured_resume.model_dump(mode="json"),
+        "job_profile": job_profile.model_dump(mode="json"),
+        "match_analysis": match_analysis.model_dump(mode="json"),
+    }
+    result = model_client.generate_structured(
+        instructions=load_prompt("optimize_resume.txt"),
+        input_text=json.dumps(input_data, ensure_ascii=False),
+        response_model=OptimizedResume,
+    )
+    _validate_optimized_resume_relationships(
+        structured_resume,
+        job_profile,
+        match_analysis,
+        result,
+    )
     return result

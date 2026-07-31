@@ -1,8 +1,15 @@
-"""Load the fixed prompt resources approved for stage 3."""
+"""Load the fixed prompt resources approved for the model workflow."""
 
 from importlib.resources import files
 
-_APPROVED_PROMPTS = frozenset({"structure_resume.txt", "analyze_job.txt"})
+_APPROVED_PROMPTS = frozenset(
+    {
+        "structure_resume.txt",
+        "analyze_job.txt",
+        "analyze_match.txt",
+        "optimize_resume.txt",
+    }
+)
 
 
 def load_prompt(name: str) -> str:

@@ -12,13 +12,21 @@ from ai_resume_optimizer.models import (
     ExtractedResume,
     JobProfile,
     JobRequirement,
+    MatchAnalysis,
+    OptimizedResume,
+    RequirementAssessment,
     ResumeItem,
     ResumeSection,
     SourceBlock,
     StructuredResume,
 )
 from ai_resume_optimizer.prompts import load_prompt
-from ai_resume_optimizer.services.analysis import analyze_job, structure_resume
+from ai_resume_optimizer.services.analysis import (
+    analyze_job,
+    analyze_match,
+    optimize_resume,
+    structure_resume,
+)
 from tests.fakes import FakeModelClient
 
 
@@ -103,6 +111,64 @@ def _job_profile(
                 source_excerpt="SQL is preferred",
             ),
         ],
+    )
+
+
+def _match_analysis(
+    assessments: list[RequirementAssessment] | None = None,
+    *,
+    overall_rating: str = "一般",
+    overall_evaluation: str = "The resume has relevant evidence with some gaps.",
+) -> MatchAnalysis:
+    return MatchAnalysis(
+        overall_rating=overall_rating,
+        overall_evaluation=overall_evaluation,
+        assessments=assessments
+        or [
+            RequirementAssessment(
+                requirement_id="requirement-0001",
+                status="well_supported",
+                source_block_ids=["block-0002"],
+                reason="Python is listed.",
+                suggested_action="Keep the evidence visible.",
+            ),
+            RequirementAssessment(
+                requirement_id="requirement-0002",
+                status="unsupported",
+                source_block_ids=[],
+                reason="No SQL evidence is present.",
+                suggested_action="Do not add SQL without evidence.",
+            ),
+        ],
+        main_issues=[],
+        section_suggestions=[],
+        keyword_suggestions=[],
+        truthfulness_risks=[],
+        content_not_to_add=["SQL"],
+    )
+
+
+def _optimized_resume(
+    item: ResumeItem | None = None,
+    *,
+    pending_user_inputs: list[str] | None = None,
+) -> OptimizedResume:
+    resume_item = item or _resume_item(
+        "Python",
+        ["block-0002"],
+        related_requirement_ids=["requirement-0001"],
+    )
+    return OptimizedResume(
+        sections=[
+            ResumeSection(
+                section_type="skills",
+                title="Skills",
+                items=[resume_item],
+                source_block_ids=resume_item.source_block_ids,
+            )
+        ],
+        pending_user_inputs=pending_user_inputs or [],
+        warnings=[],
     )
 
 
@@ -443,3 +509,381 @@ def test_services_propagate_model_client_errors(
     with pytest.raises(type(error)) as job_raised:
         analyze_job("Python is required.", client)
     assert job_raised.value is error
+
+
+def test_analyze_match_sends_ordered_safe_json_and_returns_result(
+    tmp_path: Path,
+) -> None:
+    structured_resume = _structured_resume()
+    job_profile = _job_profile()
+    expected = _match_analysis()
+    before_resume = structured_resume.model_dump()
+    before_job = job_profile.model_dump()
+    client = FakeModelClient({MatchAnalysis: expected})
+
+    actual = analyze_match(client, structured_resume, job_profile)
+
+    assert actual is expected
+    assert structured_resume.model_dump() == before_resume
+    assert job_profile.model_dump() == before_job
+    assert len(client.calls) == 1
+    call = client.calls[0]
+    assert call.response_model is MatchAnalysis
+    assert call.instructions == load_prompt("analyze_match.txt")
+    payload = json.loads(call.input_text)
+    assert list(payload) == ["structured_resume", "job_profile"]
+    assert [section["title"] for section in payload["structured_resume"]["sections"]] == ["Skills"]
+    assert [
+        requirement["requirement_id"] for requirement in payload["job_profile"]["requirements"]
+    ] == ["requirement-0001", "requirement-0002"]
+    assert str(tmp_path) not in call.input_text
+
+
+@pytest.mark.parametrize(
+    "assessments",
+    [
+        [
+            RequirementAssessment(
+                requirement_id="requirement-0001",
+                status="well_supported",
+                source_block_ids=["block-0002"],
+                reason="Evidence exists.",
+                suggested_action="Keep it.",
+            )
+        ],
+        [
+            RequirementAssessment(
+                requirement_id="requirement-0001",
+                status="well_supported",
+                source_block_ids=["block-0002"],
+                reason="Evidence exists.",
+                suggested_action="Keep it.",
+            ),
+            RequirementAssessment(
+                requirement_id="requirement-0002",
+                status="unsupported",
+                source_block_ids=[],
+                reason="No evidence.",
+                suggested_action="Do not add it.",
+            ),
+            RequirementAssessment(
+                requirement_id="requirement-9999",
+                status="unsupported",
+                source_block_ids=[],
+                reason="Unknown requirement.",
+                suggested_action="Do not add it.",
+            ),
+        ],
+        [
+            RequirementAssessment(
+                requirement_id="requirement-0002",
+                status="unsupported",
+                source_block_ids=[],
+                reason="No evidence.",
+                suggested_action="Do not add it.",
+            ),
+            RequirementAssessment(
+                requirement_id="requirement-0001",
+                status="well_supported",
+                source_block_ids=["block-0002"],
+                reason="Evidence exists.",
+                suggested_action="Keep it.",
+            ),
+        ],
+    ],
+)
+def test_analyze_match_rejects_missing_unknown_or_reordered_assessments(
+    assessments: list[RequirementAssessment],
+) -> None:
+    client = FakeModelClient({MatchAnalysis: _match_analysis(assessments)})
+
+    with pytest.raises(ModelOutputError):
+        analyze_match(client, _structured_resume(), _job_profile())
+
+    assert [
+        assessment.requirement_id for assessment in client.responses[MatchAnalysis].assessments
+    ] == [assessment.requirement_id for assessment in assessments]
+
+
+def test_analyze_match_rejects_duplicate_assessment_ids() -> None:
+    duplicate = _match_analysis().model_construct(
+        assessments=[
+            RequirementAssessment(
+                requirement_id="requirement-0001",
+                status="well_supported",
+                source_block_ids=["block-0002"],
+                reason="Evidence exists.",
+                suggested_action="Keep it.",
+            ),
+            RequirementAssessment(
+                requirement_id="requirement-0001",
+                status="well_supported",
+                source_block_ids=["block-0002"],
+                reason="Evidence exists.",
+                suggested_action="Keep it.",
+            ),
+        ]
+    )
+
+    with pytest.raises(ModelOutputError):
+        analyze_match(
+            FakeModelClient({MatchAnalysis: duplicate}),
+            _structured_resume(),
+            _job_profile(),
+        )
+
+
+def test_analyze_match_accepts_section_and_unclassified_block_evidence() -> None:
+    structured_resume = StructuredResume(
+        sections=[
+            ResumeSection(
+                section_type="skills",
+                title="Skills",
+                items=[_resume_item("Python", ["block-0001"])],
+                source_block_ids=["block-0001"],
+            )
+        ],
+        unclassified_content=[_resume_item("SQL", ["block-0002"])],
+        warnings=[],
+    )
+    assessments = [
+        RequirementAssessment(
+            requirement_id="requirement-0001",
+            status="well_supported",
+            source_block_ids=["block-0001"],
+            reason="Section evidence.",
+            suggested_action="Keep it.",
+        ),
+        RequirementAssessment(
+            requirement_id="requirement-0002",
+            status="underrepresented",
+            source_block_ids=["block-0002"],
+            reason="Unclassified evidence.",
+            suggested_action="Clarify it.",
+        ),
+    ]
+    expected = _match_analysis(assessments)
+
+    assert (
+        analyze_match(
+            FakeModelClient({MatchAnalysis: expected}),
+            structured_resume,
+            _job_profile(),
+        )
+        is expected
+    )
+
+
+def test_analyze_match_rejects_unknown_assessment_block_without_leaking_resume() -> None:
+    resume = _structured_resume()
+    assessments = [
+        RequirementAssessment(
+            requirement_id="requirement-0001",
+            status="well_supported",
+            source_block_ids=["block-9999"],
+            reason="Invalid evidence.",
+            suggested_action="Keep it.",
+        ),
+        _match_analysis().assessments[1],
+    ]
+
+    with pytest.raises(ModelOutputError) as raised:
+        analyze_match(
+            FakeModelClient({MatchAnalysis: _match_analysis(assessments)}),
+            resume,
+            _job_profile(),
+        )
+
+    assert resume.model_dump_json() not in str(raised.value)
+
+
+@pytest.mark.parametrize("rating", ["高", "一般", "低"])
+def test_analyze_match_accepts_all_qualitative_ratings(rating: str) -> None:
+    expected = _match_analysis(overall_rating=rating)
+
+    assert (
+        analyze_match(
+            FakeModelClient({MatchAnalysis: expected}),
+            _structured_resume(),
+            _job_profile(),
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    "evaluation",
+    [
+        "Internal match rating: 80%",
+        "内部匹配评价80%",
+        "ATS score is strong.",
+        "评价包含ATS score。",
+        "ATS 分数较高。",
+        "预计通过率较高。",
+        "预计录取率较高。",
+        "招聘平台评分较高。",
+    ],
+)
+def test_analyze_match_rejects_numeric_scores_and_recruiting_predictions(
+    evaluation: str,
+) -> None:
+    with pytest.raises(ModelOutputError):
+        analyze_match(
+            FakeModelClient({MatchAnalysis: _match_analysis(overall_evaluation=evaluation)}),
+            _structured_resume(),
+            _job_profile(),
+        )
+
+
+def test_analyze_match_allows_ats_as_an_ordinary_skill_term() -> None:
+    expected = _match_analysis(
+        overall_evaluation="The resume shows experience administering ATS software."
+    )
+
+    assert (
+        analyze_match(
+            FakeModelClient({MatchAnalysis: expected}),
+            _structured_resume(),
+            _job_profile(),
+        )
+        is expected
+    )
+
+
+def test_optimize_resume_sends_ordered_safe_json_and_returns_result(
+    tmp_path: Path,
+) -> None:
+    structured_resume = _structured_resume()
+    job_profile = _job_profile()
+    match_analysis = _match_analysis()
+    expected = _optimized_resume()
+    before = (
+        structured_resume.model_dump(),
+        job_profile.model_dump(),
+        match_analysis.model_dump(),
+    )
+    client = FakeModelClient({OptimizedResume: expected})
+
+    actual = optimize_resume(
+        client,
+        structured_resume,
+        job_profile,
+        match_analysis,
+    )
+
+    assert actual is expected
+    assert before == (
+        structured_resume.model_dump(),
+        job_profile.model_dump(),
+        match_analysis.model_dump(),
+    )
+    call = client.calls[0]
+    assert len(client.calls) == 1
+    assert call.response_model is OptimizedResume
+    assert call.instructions == load_prompt("optimize_resume.txt")
+    payload = json.loads(call.input_text)
+    assert list(payload) == [
+        "structured_resume",
+        "job_profile",
+        "match_analysis",
+    ]
+    assert [
+        requirement["requirement_id"] for requirement in payload["job_profile"]["requirements"]
+    ] == ["requirement-0001", "requirement-0002"]
+    assert [section["title"] for section in payload["structured_resume"]["sections"]] == ["Skills"]
+    assert str(tmp_path) not in call.input_text
+
+
+def test_optimize_resume_accepts_valid_source_and_requirement_ids() -> None:
+    expected = _optimized_resume()
+
+    assert (
+        optimize_resume(
+            FakeModelClient({OptimizedResume: expected}),
+            _structured_resume(),
+            _job_profile(),
+            _match_analysis(),
+        )
+        is expected
+    )
+
+
+def test_optimize_resume_rejects_unknown_source_block_id() -> None:
+    item = _resume_item("Python", ["block-9999"])
+    expected = _optimized_resume(item)
+
+    with pytest.raises(ModelOutputError):
+        optimize_resume(
+            FakeModelClient({OptimizedResume: expected}),
+            _structured_resume(),
+            _job_profile(),
+            _match_analysis(),
+        )
+
+
+def test_optimize_resume_rejects_unknown_requirement_id() -> None:
+    item = _resume_item(
+        "Python",
+        ["block-0002"],
+        related_requirement_ids=["requirement-9999"],
+    )
+
+    with pytest.raises(ModelOutputError):
+        optimize_resume(
+            FakeModelClient({OptimizedResume: _optimized_resume(item)}),
+            _structured_resume(),
+            _job_profile(),
+            _match_analysis(),
+        )
+
+
+def test_optimize_resume_rejects_unsupported_requirement_reference() -> None:
+    item = _resume_item(
+        "Python",
+        ["block-0002"],
+        related_requirement_ids=["requirement-0002"],
+    )
+
+    with pytest.raises(ModelOutputError):
+        optimize_resume(
+            FakeModelClient({OptimizedResume: _optimized_resume(item)}),
+            _structured_resume(),
+            _job_profile(),
+            _match_analysis(),
+        )
+
+
+def test_optimize_resume_rejects_mismatched_analysis_before_model_call() -> None:
+    mismatched = _match_analysis([_match_analysis().assessments[0]])
+    client = FakeModelClient({OptimizedResume: _optimized_resume()})
+
+    with pytest.raises(ModelOutputError):
+        optimize_resume(
+            client,
+            _structured_resume(),
+            _job_profile(),
+            mismatched,
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ModelCallError("provider unavailable"),
+        ModelOutputError("invalid provider output"),
+    ],
+)
+def test_optimize_resume_propagates_model_errors(error: Exception) -> None:
+    client = FakeModelClient(error=error)
+
+    with pytest.raises(type(error)) as raised:
+        optimize_resume(
+            client,
+            _structured_resume(),
+            _job_profile(),
+            _match_analysis(),
+        )
+
+    assert raised.value is error
