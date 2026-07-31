@@ -1,0 +1,20 @@
+Backend Software Engineer
+
+Example Product Studio is seeking a Backend Software Engineer to build and
+maintain internal service APIs for a fictitious product environment.
+
+Required qualifications:
+- Professional experience using Python.
+- Experience designing or maintaining REST APIs.
+- Working knowledge of SQL and relational data.
+- Experience writing automated tests.
+- Familiarity with Git-based team development.
+
+Preferred qualifications:
+- Experience with Docker.
+- Experience with FastAPI.
+
+Responsibilities:
+- Collaborate with engineers and product partners on service changes.
+- Write clear technical documentation for APIs and operational procedures.
+- Review code and help maintain reliable development practices.
