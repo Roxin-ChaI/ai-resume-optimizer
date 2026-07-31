@@ -19,6 +19,8 @@
   DeepSeek resume structuring.
 - Required requirement ID manifests with exact assessment count, uniqueness, and
   input-order constraints for DeepSeek match analysis.
+- Safe model JSON and Pydantic failure diagnostics with response-model names and
+  field paths, without retaining raw model responses.
 - Deterministic checks for new numbers, new dates, and misplaced placeholders.
 - Human-review markers for significant rewrites.
 - Qualitative ratings only, with no ATS percentage score.

@@ -370,6 +370,41 @@ def test_cli_expected_errors_use_project_exit_codes_without_traceback(
     assert "Traceback" not in result.output
 
 
+def test_cli_displays_safe_model_validation_detail_without_cause(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    safe_message = (
+        "MatchAnalysis output validation failed: "
+        "assessments.2.status [literal_error]: Input should be an approved status"
+    )
+    sensitive_detail = "TOP-SECRET-TEST-VALUE invalid-test-key"
+    error = ModelOutputError(safe_message)
+    error.__cause__ = ValueError(sensitive_detail)
+
+    def fail(**kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr(cli_module, "_execute_optimization", fail)
+
+    result = runner.invoke(
+        app,
+        [
+            "optimize",
+            "--resume",
+            str(tmp_path / "resume.docx"),
+            "--job-description",
+            str(tmp_path / "job.txt"),
+        ],
+    )
+
+    assert result.exit_code == 5
+    assert safe_message in result.output
+    assert sensitive_detail not in result.output
+    assert "ValueError" not in result.output
+    assert "Traceback" not in result.output
+
+
 def test_cli_unexpected_error_is_generic_and_exit_code_one(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

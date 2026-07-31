@@ -15,13 +15,22 @@ from openai import (
     AuthenticationError,
     RateLimitError,
 )
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from ai_resume_optimizer.config import DEEPSEEK_BASE_URL, DEFAULT_DEEPSEEK_MODEL
 from ai_resume_optimizer.exceptions import ModelCallError, ModelOutputError
 from ai_resume_optimizer.model_client import DeepSeekModelClient, ModelClient
-from ai_resume_optimizer.models import JobProfile, JobRequirement
+from ai_resume_optimizer.models import JobProfile, JobRequirement, StructuredResume
 from tests.fakes import FakeModelClient
+
+
+class _ManyErrorModel(BaseModel):
+    field_1: int
+    field_2: int
+    field_3: int
+    field_4: int
+    field_5: int
+    field_6: int
 
 
 def _job_profile() -> JobProfile:
@@ -226,8 +235,8 @@ def test_generate_structured_rejects_blank_text(
     ("response", "expected_message"),
     [
         (SimpleNamespace(choices=[]), "choices"),
-        (_response(None), "JSON content"),
-        (_response("   "), "JSON content"),
+        (_response(None), "empty content"),
+        (_response("   "), "empty content"),
         (_response("{}", finish_reason="length"), "truncated"),
         (
             SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=None)]),
@@ -239,49 +248,163 @@ def test_generate_structured_rejects_missing_or_truncated_output(
     response: object,
     expected_message: str,
 ) -> None:
-    with pytest.raises(ModelOutputError, match=expected_message):
+    with pytest.raises(ModelOutputError, match=expected_message) as raised:
         _client(_injected_client(response)).generate_structured(
             instructions="Extract.",
             input_text="Python",
             response_model=JobProfile,
         )
 
+    assert "JobProfile" in str(raised.value)
+
 
 def test_generate_structured_rejects_invalid_json_with_cause() -> None:
-    sensitive_input = "private resume text that must not leak"
+    sensitive_value = "TOP-SECRET-TEST-VALUE"
+    invalid_json = f'{{\n"role_summary": "{sensitive_value}",\n"requirements": [}}'
 
     with pytest.raises(ModelOutputError) as raised:
-        _client(_injected_client(_response("not-json"))).generate_structured(
+        _client(_injected_client(_response(invalid_json))).generate_structured(
             instructions="Extract.",
-            input_text=sensitive_input,
+            input_text="Fictitious input",
             response_model=JobProfile,
         )
 
+    message = str(raised.value)
     assert isinstance(raised.value.__cause__, json.JSONDecodeError)
-    assert sensitive_input not in str(raised.value)
-    assert "not-json" not in str(raised.value)
+    assert "JobProfile JSON decoding failed" in message
+    assert "line 3" in message
+    assert "column" in message
+    assert sensitive_value not in message
+    assert invalid_json not in message
+    assert "input_value" not in message
+    assert "invalid-test-key" not in message
 
 
 def test_generate_structured_rejects_non_object_json() -> None:
-    with pytest.raises(ModelOutputError, match="must be an object"):
-        _client(_injected_client(_response("[]"))).generate_structured(
-            instructions="Extract.",
-            input_text="Python",
-            response_model=JobProfile,
-        )
+    sensitive_value = "TOP-SECRET-TEST-VALUE"
+    content = json.dumps([{"secret": sensitive_value}])
 
-
-def test_generate_structured_rejects_pydantic_validation_failure_with_cause() -> None:
     with pytest.raises(ModelOutputError) as raised:
-        _client(
-            _injected_client(_response('{"role_summary": "", "requirements": []}'))
-        ).generate_structured(
+        _client(_injected_client(_response(content))).generate_structured(
             instructions="Extract.",
             input_text="Python",
             response_model=JobProfile,
         )
 
+    message = str(raised.value)
+    assert "JobProfile output validation failed" in message
+    assert "expected a JSON object" in message
+    assert "received list" in message
+    assert sensitive_value not in message
+    assert content not in message
+
+
+def test_generate_structured_reports_safe_pydantic_field_error_with_cause() -> None:
+    sensitive_value = "TOP-SECRET-TEST-VALUE"
+    content = json.dumps(
+        {
+            "role_summary": "Example role",
+            "requirements": [
+                {
+                    "requirement_id": "requirement-0001",
+                    "category": sensitive_value,
+                    "description": "Example requirement",
+                    "importance": "required",
+                    "source_excerpt": "Example requirement",
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(ModelOutputError) as raised:
+        _client(_injected_client(_response(content))).generate_structured(
+            instructions="Extract.",
+            input_text="Python",
+            response_model=JobProfile,
+        )
+
+    message = str(raised.value)
     assert isinstance(raised.value.__cause__, ValidationError)
+    assert "JobProfile output validation failed" in message
+    assert "requirements.0.category [literal_error]" in message
+    assert "Input should be" in message
+    for forbidden in (
+        sensitive_value,
+        content,
+        "input_value",
+        "input_type",
+        "errors.pydantic.dev",
+        "invalid-test-key",
+    ):
+        assert forbidden not in message
+
+
+def test_generate_structured_reports_safe_nested_validation_path() -> None:
+    sensitive_value = "TOP-SECRET-TEST-VALUE"
+    content = json.dumps(
+        {
+            "sections": [
+                {
+                    "section_type": "skills",
+                    "title": "Example section",
+                    "items": [
+                        {
+                            "text": "Example item",
+                            "source_block_ids": sensitive_value,
+                            "related_requirement_ids": [],
+                            "needs_review": False,
+                            "review_note": None,
+                        }
+                    ],
+                    "source_block_ids": ["block-0001"],
+                }
+            ],
+            "unclassified_content": [],
+            "warnings": [],
+        }
+    )
+
+    with pytest.raises(ModelOutputError) as raised:
+        _client(_injected_client(_response(content))).generate_structured(
+            instructions="Structure.",
+            input_text="Fictitious resume",
+            response_model=StructuredResume,
+        )
+
+    message = str(raised.value)
+    assert "StructuredResume output validation failed" in message
+    assert "sections.0.items.0.source_block_ids [list_type]" in message
+    assert sensitive_value not in message
+    assert content not in message
+
+
+def test_generate_structured_limits_pydantic_diagnostics_to_five_issues() -> None:
+    sensitive_value = "TOP-SECRET-TEST-VALUE"
+    content = json.dumps(
+        {
+            "field_1": "one",
+            "field_2": "two",
+            "field_3": "three",
+            "field_4": "four",
+            "field_5": "five",
+            "field_6": sensitive_value,
+        }
+    )
+
+    with pytest.raises(ModelOutputError) as raised:
+        _client(_injected_client(_response(content))).generate_structured(
+            instructions="Validate.",
+            input_text="Fictitious input",
+            response_model=_ManyErrorModel,
+        )
+
+    message = str(raised.value)
+    assert "_ManyErrorModel output validation failed" in message
+    assert message.count("[int_parsing]") == 5
+    assert "(+1 more validation errors)" in message
+    assert "field_6" not in message
+    assert sensitive_value not in message
+    assert content not in message
 
 
 def _api_errors() -> list[Exception]:
