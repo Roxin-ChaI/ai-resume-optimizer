@@ -15,6 +15,9 @@ dependencies = [
     "typer",
 ]
 
+[project.scripts]
+ai-resume-optimizer = "ai_resume_optimizer.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest",
