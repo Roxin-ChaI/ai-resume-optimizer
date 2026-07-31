@@ -29,12 +29,11 @@ def _iter_items(structured_resume: StructuredResume) -> list[ResumeItem]:
     ]
 
 
-def _validate_structured_resume(
+def _validate_known_source_block_ids(
     extracted_resume: ExtractedResume,
     structured_resume: StructuredResume,
 ) -> None:
     valid_ids = {block.block_id for block in extracted_resume.blocks}
-    item_ids: set[str] = set()
 
     for section in structured_resume.sections:
         for block_id in section.source_block_ids:
@@ -49,6 +48,51 @@ def _validate_structured_resume(
                 raise ModelOutputError(
                     f"Structured resume references unknown source block ID {block_id!r}."
                 )
+
+
+def _restore_missing_source_blocks(
+    extracted_resume: ExtractedResume,
+    structured_resume: StructuredResume,
+) -> StructuredResume:
+    valid_ids = {block.block_id for block in extracted_resume.blocks}
+    referenced_ids = {
+        block_id for item in _iter_items(structured_resume) for block_id in item.source_block_ids
+    }
+    missing_ids = valid_ids - referenced_ids
+    restored_items = [
+        ResumeItem(
+            text=block.text,
+            source_block_ids=[block.block_id],
+            related_requirement_ids=[],
+            needs_review=False,
+            review_note=None,
+        )
+        for block in extracted_resume.blocks
+        if block.block_id in missing_ids
+    ]
+    if not restored_items:
+        return structured_resume
+
+    return structured_resume.model_copy(
+        update={
+            "unclassified_content": [
+                *structured_resume.unclassified_content,
+                *restored_items,
+            ]
+        }
+    )
+
+
+def _validate_structured_resume(
+    extracted_resume: ExtractedResume,
+    structured_resume: StructuredResume,
+) -> None:
+    valid_ids = {block.block_id for block in extracted_resume.blocks}
+    item_ids: set[str] = set()
+
+    _validate_known_source_block_ids(extracted_resume, structured_resume)
+    for item in _iter_items(structured_resume):
+        for block_id in item.source_block_ids:
             item_ids.add(block_id)
         if item.related_requirement_ids:
             raise ModelOutputError("Resume structuring must not add job requirement relationships.")
@@ -99,8 +143,10 @@ def structure_resume(
         input_text=_build_structure_resume_input(extracted_resume),
         response_model=StructuredResume,
     )
-    _validate_structured_resume(extracted_resume, result)
-    return result
+    _validate_known_source_block_ids(extracted_resume, result)
+    complete_result = _restore_missing_source_blocks(extracted_resume, result)
+    _validate_structured_resume(extracted_resume, complete_result)
+    return complete_result
 
 
 def _normalize_whitespace(value: str) -> str:

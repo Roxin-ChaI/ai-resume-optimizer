@@ -103,6 +103,17 @@ def _resume_item(
     )
 
 
+def _referenced_source_block_ids(structured_resume: StructuredResume) -> list[str]:
+    return [
+        block_id
+        for item in [
+            *(item for section in structured_resume.sections for item in section.items),
+            *structured_resume.unclassified_content,
+        ]
+        for block_id in item.source_block_ids
+    ]
+
+
 def _structured_resume() -> StructuredResume:
     items = [
         _resume_item("Skills", ["block-0001"]),
@@ -352,7 +363,44 @@ def test_structure_resume_accepts_covered_four_character_heading(tmp_path: Path)
     assert actual is expected
 
 
-def test_structure_resume_rejects_omitted_four_character_heading_once(
+def test_structure_resume_restores_single_omitted_block_once(tmp_path: Path) -> None:
+    blocks = [
+        SourceBlock(
+            block_id="block-0001",
+            text="Skills",
+            kind="heading",
+            location="body:1",
+        ),
+        SourceBlock(
+            block_id="block-0002",
+            text="Python",
+            kind="list_item",
+            location="body:2",
+        ),
+        SourceBlock(
+            block_id="block-0003",
+            text="Example portfolio detail",
+            kind="paragraph",
+            location="body:3",
+        ),
+    ]
+    extracted = _extracted_resume_with_blocks(tmp_path, blocks)
+    model_result = _structured_resume()
+    client = FakeModelClient({StructuredResume: model_result})
+
+    actual = structure_resume(extracted, client)
+
+    assert actual is not model_result
+    assert actual.unclassified_content == [_resume_item("Example portfolio detail", ["block-0003"])]
+    assert set(_referenced_source_block_ids(actual)) == {
+        "block-0001",
+        "block-0002",
+        "block-0003",
+    }
+    assert len(client.calls) == 1
+
+
+def test_structure_resume_restores_omitted_four_character_heading_once(
     tmp_path: Path,
 ) -> None:
     heading_text = "技能概览"
@@ -377,15 +425,18 @@ def test_structure_resume_rejects_omitted_four_character_heading_once(
     )
     client = FakeModelClient({StructuredResume: result})
 
-    with pytest.raises(ModelOutputError, match="block-0001") as raised:
-        structure_resume(_extracted_resume_with_blocks(tmp_path, blocks), client)
+    actual = structure_resume(_extracted_resume_with_blocks(tmp_path, blocks), client)
 
-    assert heading_text not in str(raised.value)
+    assert actual.sections == []
+    assert actual.unclassified_content == [
+        _resume_item("Example detail", ["block-0002"]),
+        _resume_item(heading_text, ["block-0001"]),
+    ]
     assert len(client.calls) == 1
 
 
 @pytest.mark.parametrize("covered_ids", [["block-0001", "block-0002"], ["block-0001"]])
-def test_structure_resume_merged_item_must_cover_every_block(
+def test_structure_resume_merged_item_recovers_unreferenced_block(
     covered_ids: list[str],
     tmp_path: Path,
 ) -> None:
@@ -410,12 +461,203 @@ def test_structure_resume_merged_item_must_cover_every_block(
     )
     client = FakeModelClient({StructuredResume: result})
 
+    actual = structure_resume(_extracted_resume_with_blocks(tmp_path, blocks), client)
+
     if len(covered_ids) == len(blocks):
-        assert structure_resume(_extracted_resume_with_blocks(tmp_path, blocks), client) is result
+        assert actual is result
     else:
-        with pytest.raises(ModelOutputError, match="block-0002"):
-            structure_resume(_extracted_resume_with_blocks(tmp_path, blocks), client)
+        assert actual.unclassified_content == [
+            _resume_item("Combined detail", ["block-0001"]),
+            _resume_item("Second detail", ["block-0002"]),
+        ]
     assert len(client.calls) == 1
+
+
+def test_structure_resume_restores_multiple_omissions_in_input_order(
+    tmp_path: Path,
+) -> None:
+    blocks = [
+        SourceBlock(
+            block_id=f"block-{index:04d}",
+            text=f"Example block {index}",
+            kind="paragraph",
+            location=f"body:{index}",
+        )
+        for index in range(1, 6)
+    ]
+    result = StructuredResume(
+        sections=[],
+        unclassified_content=[
+            _resume_item("Example block 2", ["block-0002"]),
+            _resume_item("Example block 4", ["block-0004"]),
+        ],
+        warnings=[],
+    )
+
+    actual = structure_resume(
+        _extracted_resume_with_blocks(tmp_path, blocks),
+        FakeModelClient({StructuredResume: result}),
+    )
+
+    assert [item.source_block_ids for item in actual.unclassified_content] == [
+        ["block-0002"],
+        ["block-0004"],
+        ["block-0001"],
+        ["block-0003"],
+        ["block-0005"],
+    ]
+    assert [item.text for item in actual.unclassified_content[-3:]] == [
+        "Example block 1",
+        "Example block 3",
+        "Example block 5",
+    ]
+    assert set(_referenced_source_block_ids(actual)) == {block.block_id for block in blocks}
+
+
+def test_structure_resume_appends_restored_block_after_existing_unclassified(
+    tmp_path: Path,
+) -> None:
+    blocks = [
+        SourceBlock(
+            block_id="block-0001",
+            text="Skills",
+            kind="heading",
+            location="body:1",
+        ),
+        SourceBlock(
+            block_id="block-0002",
+            text="Existing note",
+            kind="paragraph",
+            location="body:2",
+        ),
+        SourceBlock(
+            block_id="block-0003",
+            text="Restored note",
+            kind="paragraph",
+            location="body:3",
+        ),
+    ]
+    section_item = _resume_item("Skills", ["block-0001"])
+    existing_item = _resume_item("Existing note", ["block-0002"])
+    result = StructuredResume(
+        sections=[
+            ResumeSection(
+                section_type="skills",
+                title="Skills",
+                items=[section_item],
+                source_block_ids=["block-0001"],
+            )
+        ],
+        unclassified_content=[existing_item],
+        warnings=["Example warning"],
+    )
+
+    actual = structure_resume(
+        _extracted_resume_with_blocks(tmp_path, blocks),
+        FakeModelClient({StructuredResume: result}),
+    )
+
+    assert actual.sections == result.sections
+    assert actual.warnings == result.warnings
+    assert actual.unclassified_content[0] is existing_item
+    assert actual.unclassified_content[1] == _resume_item("Restored note", ["block-0003"])
+
+
+def test_structure_resume_does_not_duplicate_already_referenced_ids(tmp_path: Path) -> None:
+    blocks = [
+        SourceBlock(
+            block_id="block-0001",
+            text="First detail",
+            kind="paragraph",
+            location="body:1",
+        ),
+        SourceBlock(
+            block_id="block-0002",
+            text="Second detail",
+            kind="paragraph",
+            location="body:2",
+        ),
+        SourceBlock(
+            block_id="block-0003",
+            text="Third detail",
+            kind="paragraph",
+            location="body:3",
+        ),
+    ]
+    result = StructuredResume(
+        sections=[],
+        unclassified_content=[
+            _resume_item("First detail", ["block-0001"]),
+            _resume_item("Combined detail", ["block-0001", "block-0002"]),
+        ],
+        warnings=[],
+    )
+
+    actual = structure_resume(
+        _extracted_resume_with_blocks(tmp_path, blocks),
+        FakeModelClient({StructuredResume: result}),
+    )
+
+    assert _referenced_source_block_ids(actual).count("block-0001") == 2
+    assert actual.unclassified_content[-1] == _resume_item("Third detail", ["block-0003"])
+    assert not any(
+        item.source_block_ids == ["block-0001"] and item is not result.unclassified_content[0]
+        for item in actual.unclassified_content
+    )
+
+
+def test_structure_resume_does_not_mutate_input_or_model_result(tmp_path: Path) -> None:
+    blocks = [
+        SourceBlock(
+            block_id="block-0001",
+            text="Skills",
+            kind="heading",
+            location="body:1",
+        ),
+        SourceBlock(
+            block_id="block-0002",
+            text="Existing detail",
+            kind="paragraph",
+            location="body:2",
+        ),
+        SourceBlock(
+            block_id="block-0003",
+            text="Missing detail",
+            kind="paragraph",
+            location="body:3",
+        ),
+    ]
+    extracted = _extracted_resume_with_blocks(tmp_path, blocks)
+    section_item = _resume_item("Skills", ["block-0001"])
+    result = StructuredResume(
+        sections=[
+            ResumeSection(
+                section_type="skills",
+                title="Skills",
+                items=[section_item],
+                source_block_ids=["block-0001"],
+            )
+        ],
+        unclassified_content=[_resume_item("Existing detail", ["block-0002"])],
+        warnings=[],
+    )
+    extracted_before = extracted.model_dump()
+    result_before = result.model_dump()
+    original_sections = result.sections
+    original_section_items = result.sections[0].items
+    original_unclassified = result.unclassified_content
+
+    actual = structure_resume(
+        extracted,
+        FakeModelClient({StructuredResume: result}),
+    )
+
+    assert extracted.model_dump() == extracted_before
+    assert result.model_dump() == result_before
+    assert result.sections is original_sections
+    assert result.sections[0].items is original_section_items
+    assert result.unclassified_content is original_unclassified
+    assert actual.unclassified_content is not original_unclassified
 
 
 def test_structure_resume_accepts_unclassified_only_with_complete_coverage(
@@ -439,17 +681,53 @@ def test_structure_resume_accepts_unclassified_only_with_complete_coverage(
     )
 
 
+def test_structure_resume_rejects_unknown_id_without_omissions(tmp_path: Path) -> None:
+    result = StructuredResume(
+        sections=[],
+        unclassified_content=[
+            _resume_item(
+                "Synthetic combined item",
+                ["block-0001", "block-0002", "block-9999"],
+            )
+        ],
+        warnings=[],
+    )
+    before = result.model_dump()
+    client = FakeModelClient({StructuredResume: result})
+
+    with pytest.raises(ModelOutputError, match="block-9999") as raised:
+        structure_resume(_extracted_resume(tmp_path), client)
+
+    assert result.model_dump() == before
+    assert "Skills\nPython" not in str(raised.value)
+    assert len(client.calls) == 1
+
+
+def test_structure_resume_rejects_unknown_id_before_restoring_omission(
+    tmp_path: Path,
+) -> None:
+    result = StructuredResume(
+        sections=[],
+        unclassified_content=[_resume_item("Synthetic item", ["block-0001", "block-9999"])],
+        warnings=[],
+    )
+    before = result.model_dump()
+    client = FakeModelClient({StructuredResume: result})
+
+    with pytest.raises(ModelOutputError, match="block-9999"):
+        structure_resume(_extracted_resume(tmp_path), client)
+
+    assert result.model_dump() == before
+    assert all("block-0002" not in item.source_block_ids for item in result.unclassified_content)
+    assert len(client.calls) == 1
+
+
 @pytest.mark.parametrize(
     "result",
     [
         StructuredResume(
             sections=[],
             unclassified_content=[_resume_item("Unknown", ["block-9999"])],
-            warnings=[],
-        ),
-        StructuredResume(
-            sections=[],
-            unclassified_content=[_resume_item("Skills", ["block-0001"])],
             warnings=[],
         ),
         StructuredResume(

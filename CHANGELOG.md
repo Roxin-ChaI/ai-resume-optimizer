@@ -17,6 +17,9 @@
 - Source-block evidence links and blocking of unsupported requirement claims.
 - Required source-block ID manifests and exact input/output coverage constraints for
   DeepSeek resume structuring.
+- Deterministic preservation of model-omitted, valid source blocks as unchanged
+  `unclassified_content`, without an additional model call.
+- Continued rejection of unknown source-block IDs before deterministic recovery.
 - Required requirement ID manifests with exact assessment count, uniqueness, and
   input-order constraints for DeepSeek match analysis.
 - Safe model JSON and Pydantic failure diagnostics with response-model names and
