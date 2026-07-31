@@ -10,7 +10,9 @@ from pydantic import ValidationError
 
 import ai_resume_optimizer.config as config_module
 from ai_resume_optimizer.config import (
-    DEFAULT_OPENAI_TIMEOUT_SECONDS,
+    DEEPSEEK_BASE_URL,
+    DEFAULT_DEEPSEEK_MODEL,
+    DEFAULT_DEEPSEEK_TIMEOUT_SECONDS,
     MAX_JOB_DESCRIPTION_CHARACTERS,
     MAX_RESUME_CHARACTERS,
     Settings,
@@ -41,6 +43,19 @@ from ai_resume_optimizer.models import (
     SourceBlock,
     StructuredResume,
 )
+
+
+@pytest.fixture(autouse=True)
+def clear_model_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_MODEL",
+        "DEEPSEEK_TIMEOUT_SECONDS",
+        "OPENAI_API_KEY",
+        "OPENAI_MODEL",
+        "OPENAI_TIMEOUT_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 def make_block(block_id: str = "block-0001") -> SourceBlock:
@@ -122,52 +137,84 @@ def make_optimized_resume() -> OptimizedResume:
 
 
 def set_required_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
-    monkeypatch.setenv("OPENAI_MODEL", "test-model")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "invalid-test-key")
 
 
 def test_load_settings_with_complete_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     set_required_environment(monkeypatch)
-    monkeypatch.setenv("OPENAI_TIMEOUT_SECONDS", "12.5")
+    monkeypatch.setenv("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL)
+    monkeypatch.setenv("DEEPSEEK_TIMEOUT_SECONDS", "12.5")
 
     settings = load_settings()
 
     assert settings == Settings(
-        openai_api_key="test-api-key",
-        openai_model="test-model",
-        openai_timeout_seconds=12.5,
+        deepseek_api_key="invalid-test-key",
+        deepseek_model=DEFAULT_DEEPSEEK_MODEL,
+        deepseek_timeout_seconds=12.5,
     )
+    assert DEEPSEEK_BASE_URL == "https://api.deepseek.com"
 
 
 @pytest.mark.parametrize(
-    ("name", "value"),
-    [
-        ("OPENAI_API_KEY", None),
-        ("OPENAI_API_KEY", "   "),
-        ("OPENAI_MODEL", None),
-        ("OPENAI_MODEL", "   "),
-    ],
+    "value",
+    [None, "   "],
 )
-def test_required_settings_reject_missing_or_blank_values(
+def test_required_api_key_rejects_missing_or_blank_values(
     monkeypatch: pytest.MonkeyPatch,
-    name: str,
     value: str | None,
 ) -> None:
     set_required_environment(monkeypatch)
     if value is None:
-        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     else:
-        monkeypatch.setenv(name, value)
+        monkeypatch.setenv("DEEPSEEK_API_KEY", value)
 
-    with pytest.raises(ConfigurationError, match=name):
+    with pytest.raises(ConfigurationError, match="DEEPSEEK_API_KEY"):
         load_settings()
 
 
-def test_load_settings_uses_default_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_settings_uses_default_model_and_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     set_required_environment(monkeypatch)
-    monkeypatch.delenv("OPENAI_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
+    monkeypatch.delenv("DEEPSEEK_TIMEOUT_SECONDS", raising=False)
 
-    assert load_settings().openai_timeout_seconds == DEFAULT_OPENAI_TIMEOUT_SECONDS
+    settings = load_settings()
+
+    assert settings.deepseek_model == DEFAULT_DEEPSEEK_MODEL
+    assert settings.deepseek_timeout_seconds == DEFAULT_DEEPSEEK_TIMEOUT_SECONDS
+
+
+def test_load_settings_accepts_explicit_supported_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_required_environment(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL)
+
+    assert load_settings().deepseek_model == DEFAULT_DEEPSEEK_MODEL
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["", "   ", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"],
+)
+def test_load_settings_rejects_unsupported_models(
+    monkeypatch: pytest.MonkeyPatch,
+    model: str,
+) -> None:
+    set_required_environment(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_MODEL", model)
+
+    with pytest.raises(ConfigurationError, match="DEEPSEEK_MODEL"):
+        load_settings()
+
+
+def test_load_settings_accepts_custom_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_required_environment(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_TIMEOUT_SECONDS", "12.5")
+
+    assert load_settings().deepseek_timeout_seconds == 12.5
 
 
 @pytest.mark.parametrize("value", ["not-a-number", "0", "-3", "nan", "inf"])
@@ -176,9 +223,9 @@ def test_load_settings_rejects_invalid_timeout(
     value: str,
 ) -> None:
     set_required_environment(monkeypatch)
-    monkeypatch.setenv("OPENAI_TIMEOUT_SECONDS", value)
+    monkeypatch.setenv("DEEPSEEK_TIMEOUT_SECONDS", value)
 
-    with pytest.raises(ConfigurationError, match="OPENAI_TIMEOUT_SECONDS"):
+    with pytest.raises(ConfigurationError, match="DEEPSEEK_TIMEOUT_SECONDS"):
         load_settings()
 
 
@@ -186,9 +233,8 @@ def test_configuration_error_does_not_include_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     secret = "sensitive-secret-value"
-    monkeypatch.setenv("OPENAI_API_KEY", secret)
-    monkeypatch.setenv("OPENAI_MODEL", "test-model")
-    monkeypatch.setenv("OPENAI_TIMEOUT_SECONDS", "invalid")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", secret)
+    monkeypatch.setenv("DEEPSEEK_TIMEOUT_SECONDS", "invalid")
 
     with pytest.raises(ConfigurationError) as error:
         load_settings()
@@ -199,8 +245,10 @@ def test_configuration_error_does_not_include_api_key(
 def test_importing_config_does_not_read_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    def fail_getenv(name: str) -> str:
+        raise AssertionError(f"Import must not read {name}.")
+
+    monkeypatch.setattr(config_module.os, "getenv", fail_getenv)
 
     reloaded = importlib.reload(config_module)
 
@@ -208,6 +256,17 @@ def test_importing_config_does_not_read_environment(
     assert reloaded.MAX_JOB_DESCRIPTION_CHARACTERS == 30_000
     assert MAX_RESUME_CHARACTERS == 50_000
     assert MAX_JOB_DESCRIPTION_CHARACTERS == 30_000
+
+
+def test_old_openai_environment_names_are_not_supported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "legacy-key")
+    monkeypatch.setenv("OPENAI_MODEL", "legacy-model")
+
+    with pytest.raises(ConfigurationError, match="DEEPSEEK_API_KEY"):
+        load_settings()
 
 
 def test_models_reject_extra_fields() -> None:

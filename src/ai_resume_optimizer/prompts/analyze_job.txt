@@ -19,5 +19,5 @@ Follow every rule:
 16. Do not upgrade preferred or contextual language to required.
 17. Deduplicate repeated statements of the same requirement while keeping its first occurrence.
 18. role_summary must summarize only the role described in the input.
-19. Return exactly the JobProfile schema requested by the caller.
-20. Return structured data only, with no Markdown, preamble, explanation, or postscript.
+19. Return exactly one JSON object that conforms to the JobProfile JSON Schema provided by the caller.
+20. Do not output Markdown, code fences, preamble, explanation, or postscript.

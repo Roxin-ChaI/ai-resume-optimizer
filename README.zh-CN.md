@@ -6,7 +6,7 @@
 
 AI Resume Optimizer 是一个基于 Python 3.12 的命令行简历优化工具。它接收带有
 可提取文本层的 PDF 或 DOCX 简历，以及来自 UTF-8 TXT 文件或交互式粘贴的目标
-岗位描述。工具通过 OpenAI Responses API 的结构化输出分析输入，并生成匹配分析
+岗位描述。工具通过 DeepSeek Chat Completions JSON Output 分析输入，并生成匹配分析
 报告、Markdown 优化简历和可编辑的 DOCX 优化简历。
 
 本工具采用保守改写策略，不得为了提高匹配程度而虚构经历、技能、雇主、教育背景、
@@ -47,8 +47,8 @@ AI Resume Optimizer 是一个基于 Python 3.12 的命令行简历优化工具�
 ## 环境要求
 
 - Python 3.12 或更高版本。
-- OpenAI API key。
-- 配置一个支持当前 Responses API 结构化输出调用方式的 OpenAI 模型。
+- DeepSeek API key。
+- 唯一支持的 DeepSeek 模型 `deepseek-v4-flash`。
 - 带有可提取文本层的 PDF，或可读取的 DOCX 文件。
 
 不支持没有文本层的扫描版 PDF。
@@ -76,13 +76,18 @@ python3.12 -m venv .venv
 通过 shell、运行环境或密钥管理工具设置以下环境变量：
 
 ```sh
-export OPENAI_API_KEY="replace-with-your-api-key"
-export OPENAI_MODEL="replace-with-a-compatible-model"
-export OPENAI_TIMEOUT_SECONDS="60"
+export DEEPSEEK_API_KEY="replace-with-your-deepseek-api-key"
+export DEEPSEEK_MODEL="deepseek-v4-flash"
+export DEEPSEEK_TIMEOUT_SECONDS="60"
 ```
 
-- `OPENAI_API_KEY` 和 `OPENAI_MODEL` 为必填项。
-- `OPENAI_TIMEOUT_SECONDS` 可选，默认值为 `60`，并且必须是正的有限数值。
+- `DEEPSEEK_API_KEY` 为必填项。
+- `DEEPSEEK_MODEL` 可选，默认且仅支持 `deepseek-v4-flash`。
+- `DEEPSEEK_TIMEOUT_SECONDS` 可选，默认值为 `60`，并且必须是正的有限数值。
+- DeepSeek API base URL 固定为 `https://api.deepseek.com`，不可配置。
+
+项目仅使用 OpenAI Python SDK 访问 DeepSeek 的 OpenAI 兼容接口，不支持 OpenAI
+模型或 Responses API。
 
 应用不会自动加载 `.env` 文件。[`.env.example`](.env.example) 仅作为配置参考模板。
 不要将 API key 提交到 Git。
@@ -148,9 +153,9 @@ ai-resume-optimizer optimize \
 
 ## 隐私
 
-简历和岗位描述会发送给所配置的 OpenAI API，用于四项结构化任务：简历结构化、
-岗位要求提取、匹配分析和简历优化。客户端调用设置 `store=False`，但这不应被解释为
-涵盖所有供应商侧数据保留行为的绝对保证。请查阅模型供应商当前的数据政策。
+简历和岗位描述会发送给 DeepSeek API，用于四项结构化任务：简历结构化、岗位要求
+提取、匹配分析和简历优化。项目不声称 DeepSeek 会存储或绝不存储请求。发送敏感
+数据前，请查阅 DeepSeek 当前的数据政策。
 
 生成文件写入用户选择的本地输出目录。工具不使用数据库、云端文件存储或优化历史
 服务。不要在公共终端、日志或仓库中暴露 API key 和敏感简历内容。
@@ -175,7 +180,7 @@ ai-resume-optimizer optimize \
 .venv/bin/python -m ruff format --check .
 ```
 
-测试默认注入 Fake 模型客户端，不调用真实 OpenAI API，也不需要真实 API key。
+测试默认注入 Fake 模型客户端，不调用真实 DeepSeek API，也不需要真实 API key。
 
 ## 项目结构
 

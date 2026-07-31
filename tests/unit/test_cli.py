@@ -108,9 +108,9 @@ def _install_success_dependencies(
 ) -> dict[str, object]:
     calls: dict[str, object] = {}
     settings = Settings(
-        openai_api_key="invalid-test-key",
-        openai_model="test-model",
-        openai_timeout_seconds=12.0,
+        deepseek_api_key="invalid-test-key",
+        deepseek_model="deepseek-v4-flash",
+        deepseek_timeout_seconds=12.0,
     )
     model_client = object()
 
@@ -134,7 +134,7 @@ def _install_success_dependencies(
 
     monkeypatch.setattr(cli_module, "read_job_description", read_job)
     monkeypatch.setattr(cli_module, "load_settings", load)
-    monkeypatch.setattr(cli_module, "OpenAIModelClient", create_client)
+    monkeypatch.setattr(cli_module, "DeepSeekModelClient", create_client)
     monkeypatch.setattr(cli_module, "run_optimization", run)
     calls["tmp_path"] = tmp_path
     return calls
@@ -191,7 +191,7 @@ def test_cli_txt_input_loads_settings_builds_client_and_runs_pipeline(
     assert calls["settings_loaded"] is True
     assert calls["client_kwargs"] == {
         "api_key": "invalid-test-key",
-        "model": "test-model",
+        "model": "deepseek-v4-flash",
         "timeout_seconds": 12.0,
     }
     pipeline_kwargs = calls["pipeline_kwargs"]

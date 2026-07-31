@@ -5,7 +5,9 @@
 ### Added
 
 - PDF and DOCX resume input, plus TXT and interactive job-description input.
-- OpenAI structured analysis and qualitative resume-to-job matching.
+- DeepSeek structured analysis and qualitative resume-to-job matching.
+- Migration to DeepSeek Chat Completions JSON Output with the fixed
+  `deepseek-v4-flash` model.
 - Markdown analysis, Markdown resume, and editable DOCX resume output.
 - A CLI with atomic-style three-file batch writing and cleanup on failure.
 - English and Chinese documentation, fictitious example inputs, and CI checks.
@@ -19,5 +21,5 @@
 
 ### Testing
 
-- Fully offline automated tests that do not call the real OpenAI API.
+- Fully offline automated tests that do not call the real DeepSeek API.
 - GitHub Actions quality checks on Python 3.12.

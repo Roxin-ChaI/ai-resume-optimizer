@@ -19,5 +19,5 @@ Follow every rule:
 16. Set review_note to null for every item.
 17. Every source_block_ids value must come from the input.
 18. Use only these section_type values: basic_info, summary, skills, experience, projects, education, certifications, other.
-19. Return exactly the StructuredResume schema requested by the caller.
-20. Return structured data only, with no Markdown, preamble, explanation, or postscript.
+19. Return exactly one JSON object that conforms to the StructuredResume JSON Schema provided by the caller.
+20. Do not output Markdown, code fences, preamble, explanation, or postscript.

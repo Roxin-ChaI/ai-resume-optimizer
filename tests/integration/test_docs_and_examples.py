@@ -36,7 +36,8 @@ def test_readmes_are_bilingual_accurate_and_safe() -> None:
 
     for expected in (
         "ai-resume-optimizer optimize",
-        "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "deepseek-v4-flash",
         "analysis_report.md",
         "optimized_resume.md",
         "optimized_resume.docx",
@@ -48,7 +49,8 @@ def test_readmes_are_bilingual_accurate_and_safe() -> None:
 
     for expected in (
         "ai-resume-optimizer optimize",
-        "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "deepseek-v4-flash",
         "analysis_report.md",
         "optimized_resume.md",
         "optimized_resume.docx",
@@ -61,6 +63,9 @@ def test_readmes_are_bilingual_accurate_and_safe() -> None:
     combined = english + chinese
     assert not ABSOLUTE_USER_PATH_PATTERN.search(combined)
     assert not SECRET_PATTERN.search(combined)
+    assert "OpenAI Responses API" not in combined
+    assert "OpenAI API key" not in combined
+    assert "configured OpenAI API" not in combined
     assert "github release has been created" not in english.casefold()
     assert "已创建 github release" not in chinese.casefold()
     assert "pip install ai-resume-optimizer" not in combined
@@ -76,11 +81,13 @@ def test_environment_example_contains_only_approved_variables() -> None:
     parsed = dict(line.split("=", maxsplit=1) for line in assignments)
 
     assert set(parsed) == {
-        "OPENAI_API_KEY",
-        "OPENAI_MODEL",
-        "OPENAI_TIMEOUT_SECONDS",
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_MODEL",
+        "DEEPSEEK_TIMEOUT_SECONDS",
     }
-    assert float(parsed["OPENAI_TIMEOUT_SECONDS"]) > 0
+    assert parsed["DEEPSEEK_MODEL"] == "deepseek-v4-flash"
+    assert float(parsed["DEEPSEEK_TIMEOUT_SECONDS"]) > 0
+    assert "OPENAI_" not in env_example
     assert not SECRET_PATTERN.search(env_example)
     assert not (PROJECT_ROOT / ".env").exists()
 
@@ -140,6 +147,8 @@ def test_example_guide_describes_safe_usage() -> None:
     assert "sample_resume.docx" in guide
     assert "sample_job_description.txt" in guide
     assert "ai-resume-optimizer optimize" in guide
+    assert "DEEPSEEK_API_KEY" in guide
+    assert "deepseek-v4-flash" in guide
     assert "fictitious" in guide.casefold()
     assert "does not include generated example outputs" in guide
     assert "refuses to overwrite" in guide
@@ -163,6 +172,7 @@ def test_ci_runs_offline_quality_checks_without_release_steps() -> None:
     ):
         assert expected.casefold() in ci_lower
 
+    assert "deepseek_api_key" not in ci_lower
     assert "openai_api_key" not in ci_lower
     assert "secrets." not in ci_lower
     assert "git push" not in ci_lower

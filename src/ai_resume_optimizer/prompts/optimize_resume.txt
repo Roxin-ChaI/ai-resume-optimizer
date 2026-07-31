@@ -28,5 +28,5 @@ Follow every rule:
 25. A substantially rewritten item must set needs_review to true and provide a nonempty review_note.
 26. A minor wording change may set needs_review to false and review_note to null.
 27. Factual body text must not contain TODO, TBD, 待补充, 请填写, bracketed placeholders, or similar fill-in instructions.
-28. Return exactly the OptimizedResume schema requested by the caller.
-29. Return structured data only, with no Markdown preamble, explanation, code fence, or postscript.
+28. Return exactly one JSON object that conforms to the OptimizedResume JSON Schema provided by the caller.
+29. Do not output Markdown, code fences, preamble, explanation, or postscript.

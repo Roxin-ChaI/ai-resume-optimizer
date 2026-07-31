@@ -10,7 +10,7 @@ import typer
 
 from ai_resume_optimizer.config import load_settings
 from ai_resume_optimizer.exceptions import InputError, ResumeOptimizerError
-from ai_resume_optimizer.model_client import OpenAIModelClient
+from ai_resume_optimizer.model_client import DeepSeekModelClient
 from ai_resume_optimizer.parsers.job_description import (
     normalize_job_description,
     read_job_description,
@@ -65,10 +65,10 @@ def _execute_optimization(
         else _read_interactive_job_description()
     )
     settings = load_settings()
-    model_client = OpenAIModelClient(
-        api_key=settings.openai_api_key,
-        model=settings.openai_model,
-        timeout_seconds=settings.openai_timeout_seconds,
+    model_client = DeepSeekModelClient(
+        api_key=settings.deepseek_api_key,
+        model=settings.deepseek_model,
+        timeout_seconds=settings.deepseek_timeout_seconds,
     )
     result = run_optimization(
         resume_path=resume,

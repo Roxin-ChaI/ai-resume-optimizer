@@ -7,7 +7,7 @@
 AI Resume Optimizer is a Python 3.12 command-line tool for evidence-grounded
 resume optimization. It accepts a text-layer PDF or DOCX resume and a target job
 description supplied from a UTF-8 TXT file or pasted interactively. It uses
-structured output from the OpenAI Responses API to analyze the inputs and
+DeepSeek Chat Completions JSON Output to analyze the inputs and
 produces an analysis report, an optimized Markdown resume, and an editable DOCX
 resume.
 
@@ -53,9 +53,8 @@ pipeline uses them.
 ## Requirements
 
 - Python 3.12 or later.
-- An OpenAI API key.
-- An OpenAI model configured to support the structured-output call used by the
-  Responses API client.
+- A DeepSeek API key.
+- The supported DeepSeek model, `deepseek-v4-flash`.
 - A PDF with an extractable text layer, or a readable DOCX file.
 
 Scanned PDFs without a text layer are not supported.
@@ -85,14 +84,21 @@ Set these environment variables through your shell, execution environment, or
 secret manager:
 
 ```sh
-export OPENAI_API_KEY="replace-with-your-api-key"
-export OPENAI_MODEL="replace-with-a-compatible-model"
-export OPENAI_TIMEOUT_SECONDS="60"
+export DEEPSEEK_API_KEY="replace-with-your-deepseek-api-key"
+export DEEPSEEK_MODEL="deepseek-v4-flash"
+export DEEPSEEK_TIMEOUT_SECONDS="60"
 ```
 
-- `OPENAI_API_KEY` and `OPENAI_MODEL` are required.
-- `OPENAI_TIMEOUT_SECONDS` is optional and defaults to `60`; it must be a positive
-  finite number.
+- `DEEPSEEK_API_KEY` is required.
+- `DEEPSEEK_MODEL` is optional and defaults to `deepseek-v4-flash`; this is the
+  only supported model value.
+- `DEEPSEEK_TIMEOUT_SECONDS` is optional and defaults to `60`; it must be a
+  positive finite number.
+- The DeepSeek API base URL is fixed at `https://api.deepseek.com` and is not
+  configurable.
+
+The project uses the OpenAI Python SDK only as a client for DeepSeek's
+OpenAI-compatible API. It does not support OpenAI models or the Responses API.
 
 The application does not automatically load `.env` files. The
 [`.env.example`](.env.example) file is a reference template only. Never commit an
@@ -164,11 +170,10 @@ guarantee. The user must review the final resume against the original evidence.
 
 ## Privacy
 
-The resume and job description are sent to the configured OpenAI API for four
-structured tasks: resume structuring, job-requirement extraction, match analysis,
-and resume optimization. Client calls set `store=False`, but that setting must not
-be interpreted as an absolute guarantee covering every provider-side retention
-behavior. Review the model provider's current data policies.
+The resume and job description are sent to the DeepSeek API for four structured
+tasks: resume structuring, job-requirement extraction, match analysis, and resume
+optimization. The project does not claim that DeepSeek stores or never stores
+requests. Review DeepSeek's current data policies before sending sensitive data.
 
 Generated files are written to the local output directory selected by the user.
 The tool has no database, cloud file store, or optimization-history service. Do
@@ -195,7 +200,7 @@ Run the offline test and quality checks:
 .venv/bin/python -m ruff format --check .
 ```
 
-Tests inject fake model clients, do not call the real OpenAI API, and do not
+Tests inject fake model clients, do not call the real DeepSeek API, and do not
 require a real API key.
 
 ## Project Structure

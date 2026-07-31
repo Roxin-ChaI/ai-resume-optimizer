@@ -5,10 +5,13 @@ supported input formats. It is not derived from a real person's resume or a real
 job posting.
 
 The repository does not include generated example outputs because a real run
-requires the user's own OpenAI API configuration. Before running the example,
-set `OPENAI_API_KEY`, `OPENAI_MODEL`, and `OPENAI_TIMEOUT_SECONDS` through your
+requires the user's own DeepSeek API configuration. Before running the example,
+set `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, and `DEEPSEEK_TIMEOUT_SECONDS` through your
 shell or execution environment. The application does not automatically load
 `.env.example`.
+
+`DEEPSEEK_MODEL` defaults to and only accepts `deepseek-v4-flash`. The API base
+URL is fixed at `https://api.deepseek.com`.
 
 Run:
 

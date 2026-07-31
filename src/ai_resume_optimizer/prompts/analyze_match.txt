@@ -24,5 +24,5 @@ Follow every rule:
 21. content_not_to_add must identify unsupported content that must not be placed in the resume.
 22. Do not rewrite the resume in this task.
 23. Do not generate a final resume in this task.
-24. Return exactly the MatchAnalysis schema requested by the caller.
-25. Return structured data only, with no Markdown preamble, explanation, code fence, or postscript.
+24. Return exactly one JSON object that conforms to the MatchAnalysis JSON Schema provided by the caller.
+25. Do not output Markdown, code fences, preamble, explanation, or postscript.

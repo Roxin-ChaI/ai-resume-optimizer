@@ -39,7 +39,7 @@ jobs:
         run: python -m ruff format --check .
 
       - name: Verify imports
-        run: python -c "from ai_resume_optimizer.pipeline import run_optimization; from ai_resume_optimizer.cli import app; print('imports-ok')"
+        run: python -c "from ai_resume_optimizer.config import DEFAULT_DEEPSEEK_MODEL; from ai_resume_optimizer.model_client import DeepSeekModelClient; from ai_resume_optimizer.pipeline import run_optimization; from ai_resume_optimizer.cli import app; assert DEFAULT_DEEPSEEK_MODEL == 'deepseek-v4-flash'; print('imports-ok')"
 
       - name: Check root CLI help
         run: ai-resume-optimizer --help
