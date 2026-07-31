@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from io import StringIO
 from pathlib import Path
 from typing import TextIO
@@ -29,6 +30,8 @@ from ai_resume_optimizer.models import (
     ResumeItem,
     ResumeSection,
 )
+
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 runner = CliRunner()
 
@@ -148,14 +151,19 @@ def test_help_commands_succeed_without_loading_configuration(
 
     monkeypatch.setattr(cli_module, "load_settings", fail_if_loaded)
 
+    monkeypatch.setenv("FORCE_COLOR", "1")
+
     root_help = runner.invoke(app, ["--help"])
     optimize_help = runner.invoke(app, ["optimize", "--help"])
 
+    root_output = ANSI_ESCAPE_RE.sub("", root_help.output)
+    optimize_output = ANSI_ESCAPE_RE.sub("", optimize_help.output)
+
     assert root_help.exit_code == 0
     assert optimize_help.exit_code == 0
-    assert "optimize" in root_help.output
+    assert "optimize" in root_output
     for option in ["--resume", "--job-description", "--output-dir"]:
-        assert option in optimize_help.output
+        assert option in optimize_output
     for forbidden in ["--overwrite", "--api-key", "--ats-score"]:
         assert forbidden not in optimize_help.output
 
