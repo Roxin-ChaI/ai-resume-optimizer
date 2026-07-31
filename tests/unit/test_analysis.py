@@ -53,6 +53,29 @@ def _extracted_resume(tmp_path: Path) -> ExtractedResume:
     )
 
 
+def _extracted_resume_with_blocks(
+    tmp_path: Path,
+    blocks: list[SourceBlock],
+) -> ExtractedResume:
+    return ExtractedResume(
+        source_path=tmp_path / "resume.docx",
+        source_format="docx",
+        blocks=blocks,
+        plain_text="\n".join(block.text for block in blocks),
+        warnings=[],
+    )
+
+
+def _parse_structure_resume_input(input_text: str) -> tuple[int, list[str], dict[str, object]]:
+    manifest_text, source_text = input_text.split("SOURCE_BLOCKS:\n", maxsplit=1)
+    manifest_lines = manifest_text.splitlines()
+    count = int(manifest_lines[0].removeprefix("REQUIRED_SOURCE_BLOCK_COUNT: "))
+    assert manifest_lines[1] == "REQUIRED_SOURCE_BLOCK_IDS:"
+    required_ids = json.loads(manifest_lines[2])
+    source_data = json.loads(source_text)
+    return count, required_ids, source_data
+
+
 def _resume_item(
     text: str,
     block_ids: list[str],
@@ -207,7 +230,9 @@ def test_structure_resume_sends_ordered_safe_json_and_returns_result(
     call = client.calls[0]
     assert call.instructions == load_prompt("structure_resume.txt")
     assert call.response_model is StructuredResume
-    payload = json.loads(call.input_text)
+    count, required_ids, payload = _parse_structure_resume_input(call.input_text)
+    assert count == 2
+    assert required_ids == ["block-0001", "block-0002"]
     assert payload == {
         "source_format": "docx",
         "blocks": [
@@ -226,6 +251,161 @@ def test_structure_resume_sends_ordered_safe_json_and_returns_result(
         ],
     }
     assert str(extracted.source_path) not in call.input_text
+
+
+def test_structure_resume_manifest_preserves_every_block_in_original_order(
+    tmp_path: Path,
+) -> None:
+    blocks = [
+        SourceBlock(
+            block_id="block-0001",
+            text="Profile summary",
+            kind="paragraph",
+            location="body:1",
+        ),
+        SourceBlock(
+            block_id="block-0002",
+            text="技能概览",
+            kind="paragraph",
+            location="body:2",
+        ),
+        SourceBlock(
+            block_id="block-0003",
+            text="Example table row",
+            kind="table_row",
+            location="table:1,row:1",
+        ),
+    ]
+    extracted = _extracted_resume_with_blocks(tmp_path, blocks)
+    expected = StructuredResume(
+        sections=[],
+        unclassified_content=[_resume_item(block.text, [block.block_id]) for block in blocks],
+        warnings=[],
+    )
+    client = FakeModelClient({StructuredResume: expected})
+
+    structure_resume(extracted, client)
+
+    assert len(client.calls) == 1
+    input_text = client.calls[0].input_text
+    count, required_ids, source_data = _parse_structure_resume_input(input_text)
+    assert count == len(blocks)
+    assert required_ids == [block.block_id for block in blocks]
+    assert required_ids[1] == "block-0002"
+    assert source_data == {
+        "source_format": "docx",
+        "blocks": [block.model_dump(mode="json") for block in blocks],
+    }
+    manifest_text = input_text.split("SOURCE_BLOCKS:\n", maxsplit=1)[0]
+    assert all(block.text not in manifest_text for block in blocks)
+
+
+def test_structure_resume_prompt_requires_exact_manifest_coverage(tmp_path: Path) -> None:
+    client = FakeModelClient({StructuredResume: _structured_resume()})
+
+    structure_resume(_extracted_resume(tmp_path), client)
+
+    assert len(client.calls) == 1
+    instructions = client.calls[0].instructions
+    for required_phrase in (
+        "sole authoritative and complete set",
+        "must be exactly equal",
+        "no required ID is omitted",
+        "no ID outside the manifest",
+        "combines multiple source blocks",
+        "every combined block ID",
+        "short content, including section headings",
+        "short single-line paragraphs",
+        "unclassified_content",
+    ):
+        assert required_phrase in instructions
+
+
+def test_structure_resume_accepts_covered_four_character_heading(tmp_path: Path) -> None:
+    blocks = [
+        SourceBlock(
+            block_id="block-0001",
+            text="技能概览",
+            kind="paragraph",
+            location="body:1",
+        )
+    ]
+    extracted = _extracted_resume_with_blocks(tmp_path, blocks)
+    expected = StructuredResume(
+        sections=[],
+        unclassified_content=[_resume_item("技能概览", ["block-0001"])],
+        warnings=[],
+    )
+
+    actual = structure_resume(extracted, FakeModelClient({StructuredResume: expected}))
+
+    assert actual is expected
+
+
+def test_structure_resume_rejects_omitted_four_character_heading_once(
+    tmp_path: Path,
+) -> None:
+    heading_text = "技能概览"
+    blocks = [
+        SourceBlock(
+            block_id="block-0001",
+            text=heading_text,
+            kind="paragraph",
+            location="body:1",
+        ),
+        SourceBlock(
+            block_id="block-0002",
+            text="Example detail",
+            kind="paragraph",
+            location="body:2",
+        ),
+    ]
+    result = StructuredResume(
+        sections=[],
+        unclassified_content=[_resume_item("Example detail", ["block-0002"])],
+        warnings=[],
+    )
+    client = FakeModelClient({StructuredResume: result})
+
+    with pytest.raises(ModelOutputError, match="block-0001") as raised:
+        structure_resume(_extracted_resume_with_blocks(tmp_path, blocks), client)
+
+    assert heading_text not in str(raised.value)
+    assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize("covered_ids", [["block-0001", "block-0002"], ["block-0001"]])
+def test_structure_resume_merged_item_must_cover_every_block(
+    covered_ids: list[str],
+    tmp_path: Path,
+) -> None:
+    blocks = [
+        SourceBlock(
+            block_id="block-0001",
+            text="First detail",
+            kind="paragraph",
+            location="body:1",
+        ),
+        SourceBlock(
+            block_id="block-0002",
+            text="Second detail",
+            kind="paragraph",
+            location="body:2",
+        ),
+    ]
+    result = StructuredResume(
+        sections=[],
+        unclassified_content=[_resume_item("Combined detail", covered_ids)],
+        warnings=[],
+    )
+    client = FakeModelClient({StructuredResume: result})
+
+    if len(covered_ids) == len(blocks):
+        assert structure_resume(_extracted_resume_with_blocks(tmp_path, blocks), client) is result
+    else:
+        with pytest.raises(ModelOutputError, match="block-0002"):
+            structure_resume(_extracted_resume_with_blocks(tmp_path, blocks), client)
+    assert len(client.calls) == 1
 
 
 def test_structure_resume_accepts_unclassified_only_with_complete_coverage(
@@ -333,11 +513,13 @@ def test_structure_resume_rejects_cross_model_constraint_violations(
     tmp_path: Path,
 ) -> None:
     extracted = _extracted_resume(tmp_path)
+    client = FakeModelClient({StructuredResume: result})
 
     with pytest.raises(ModelOutputError) as raised:
-        structure_resume(extracted, FakeModelClient({StructuredResume: result}))
+        structure_resume(extracted, client)
 
     assert extracted.plain_text not in str(raised.value)
+    assert len(client.calls) == 1
 
 
 def test_structure_resume_validates_section_aggregate_ids_too(tmp_path: Path) -> None:
@@ -356,12 +538,11 @@ def test_structure_resume_validates_section_aggregate_ids_too(tmp_path: Path) ->
         unclassified_content=[],
         warnings=[],
     )
+    client = FakeModelClient({StructuredResume: result})
 
     with pytest.raises(ModelOutputError, match="block-9999"):
-        structure_resume(
-            _extracted_resume(tmp_path),
-            FakeModelClient({StructuredResume: result}),
-        )
+        structure_resume(_extracted_resume(tmp_path), client)
+    assert len(client.calls) == 1
 
 
 def test_analyze_job_sends_normalized_text_and_returns_result() -> None:

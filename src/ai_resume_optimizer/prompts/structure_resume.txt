@@ -5,19 +5,27 @@ Follow every rule:
 2. Do not add any candidate fact.
 3. Do not invent or add companies, schools, job titles, skills, certificates, projects, responsibilities, results, numbers, or dates.
 4. Never modify a block_id.
-5. Reference only block_id values that appear in the input.
-6. Every input block must be referenced by at least one section item or unclassified_content item.
-7. Put content that cannot be confidently assigned to a section in unclassified_content.
-8. Never silently omit content.
-9. Do not remove content because it seems irrelevant.
-10. Do not infer or use a job description.
-11. Do not perform job matching or requirement assessment.
-12. Do not optimize, rewrite, strengthen, summarize, or embellish resume content.
-13. Only identify sections and organize the original content.
-14. Set related_requirement_ids to an empty list for every item.
-15. Set needs_review to false for every item.
-16. Set review_note to null for every item.
-17. Every source_block_ids value must come from the input.
-18. Use only these section_type values: basic_info, summary, skills, experience, projects, education, certifications, other.
-19. Return exactly one JSON object that conforms to the StructuredResume JSON Schema provided by the caller.
-20. Do not output Markdown, code fences, preamble, explanation, or postscript.
+5. REQUIRED_SOURCE_BLOCK_IDS is the sole authoritative and complete set of source block IDs for this request.
+6. The union of source_block_ids across every section item and unclassified_content item must be exactly equal to REQUIRED_SOURCE_BLOCK_IDS.
+7. Exact equality means every required ID is referenced at least once, no required ID is omitted, and no ID outside the manifest is referenced.
+8. If one structured item combines multiple source blocks, include every combined block ID in that item's source_block_ids; never keep only one representative ID.
+9. Never omit short content, including section headings, custom-style headings, contact details, labels, dates, short single-line paragraphs, list items, and table content.
+10. Apparent repetition, weak decoration, job irrelevance, or a length of only a few characters is never a reason to omit a block.
+11. Put every block that cannot be confidently assigned to a section in unclassified_content.
+12. Never silently omit content.
+13. Do not infer or use a job description.
+14. Do not perform job matching or requirement assessment.
+15. Do not optimize, rewrite, strengthen, summarize, or embellish resume content.
+16. Only identify sections and organize the original content.
+17. Set related_requirement_ids to an empty list for every item.
+18. Set needs_review to false for every item.
+19. Set review_note to null for every item.
+20. Use only these section_type values: basic_info, summary, skills, experience, projects, education, certifications, other.
+21. Before returning, verify that the output ID union matches REQUIRED_SOURCE_BLOCK_COUNT and REQUIRED_SOURCE_BLOCK_IDS, with no omitted or unknown IDs.
+22. Return exactly one JSON object that conforms to the StructuredResume JSON Schema provided by the caller.
+23. Do not output the verification process, Markdown, code fences, preamble, explanation, or postscript.
+
+Coverage example:
+Required IDs: ["block-0001", "block-0002"]
+Valid coverage: both IDs are referenced.
+Invalid coverage: only "block-0001" is referenced.

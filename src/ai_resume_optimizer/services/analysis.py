@@ -63,13 +63,9 @@ def _validate_structured_resume(
         raise ModelOutputError(f"Structured resume omitted source block ID {missing_id!r}.")
 
 
-def structure_resume(
-    extracted_resume: ExtractedResume,
-    model_client: ModelClient,
-) -> StructuredResume:
-    """Structure ordered resume blocks while retaining complete source coverage."""
-
-    input_data = {
+def _build_structure_resume_input(extracted_resume: ExtractedResume) -> str:
+    required_ids = [block.block_id for block in extracted_resume.blocks]
+    source_data = {
         "source_format": extracted_resume.source_format,
         "blocks": [
             {
@@ -81,9 +77,26 @@ def structure_resume(
             for block in extracted_resume.blocks
         ],
     }
+    return "\n".join(
+        [
+            f"REQUIRED_SOURCE_BLOCK_COUNT: {len(required_ids)}",
+            "REQUIRED_SOURCE_BLOCK_IDS:",
+            json.dumps(required_ids, ensure_ascii=False),
+            "SOURCE_BLOCKS:",
+            json.dumps(source_data, ensure_ascii=False),
+        ]
+    )
+
+
+def structure_resume(
+    extracted_resume: ExtractedResume,
+    model_client: ModelClient,
+) -> StructuredResume:
+    """Structure ordered resume blocks while retaining complete source coverage."""
+
     result = model_client.generate_structured(
         instructions=load_prompt("structure_resume.txt"),
-        input_text=json.dumps(input_data, ensure_ascii=False),
+        input_text=_build_structure_resume_input(extracted_resume),
         response_model=StructuredResume,
     )
     _validate_structured_resume(extracted_resume, result)
