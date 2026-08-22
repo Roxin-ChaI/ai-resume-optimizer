@@ -83,6 +83,7 @@ class DeepSeekModelClient:
             raise ValueError("timeout_seconds must be a positive finite number.")
 
         self._model = normalized_model
+        self._closed = False
         self._client = (
             client
             if client is not None
@@ -191,3 +192,11 @@ class DeepSeekModelClient:
                 f"{response_model_name} output validation failed: "
                 "the response structure could not be inspected."
             ) from error
+
+    def close(self) -> None:
+        """Close the underlying SDK client at most once."""
+
+        if self._closed:
+            return
+        self._closed = True
+        self._client.close()

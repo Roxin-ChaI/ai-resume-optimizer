@@ -122,6 +122,16 @@ def test_constructor_uses_injected_client_without_creating_sdk_client() -> None:
     assert client._client is injected
 
 
+def test_close_closes_injected_sdk_client_at_most_once() -> None:
+    injected = Mock()
+    client = _client(injected)
+
+    client.close()
+    client.close()
+
+    injected.close.assert_called_once_with()
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
