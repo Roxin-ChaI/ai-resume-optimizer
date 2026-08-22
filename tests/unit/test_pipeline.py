@@ -13,6 +13,8 @@ from docx import Document
 from docx.document import Document as DocumentObject
 
 import ai_resume_optimizer.pipeline as pipeline_module
+import ai_resume_optimizer.runner as runner_module
+from ai_resume_optimizer import ResumeOptimizerClosedError, ResumeOptimizerRunner
 from ai_resume_optimizer.exceptions import (
     InputError,
     ModelCallError,
@@ -25,6 +27,7 @@ from ai_resume_optimizer.models import (
     JobProfile,
     JobRequirement,
     MatchAnalysis,
+    OptimizationResult,
     OptimizedResume,
     RequirementAssessment,
     ResumeItem,
@@ -35,6 +38,16 @@ from ai_resume_optimizer.pipeline import run_optimization
 from tests.fakes import FakeModelClient
 
 DocxFactory = Callable[[Callable[[DocumentObject], None] | None, str], Path]
+PdfFactory = Callable[[list[str], str], Path]
+
+
+class _ClosableFakeModelClient(FakeModelClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
 
 
 def _resume_document(document: DocumentObject) -> None:
@@ -148,6 +161,160 @@ def _assert_no_output_batch(output_dir: Path) -> None:
     assert not any(path.exists() for path in _final_paths(output_dir))
     if output_dir.exists() and output_dir.is_dir():
         assert not list(output_dir.glob("*.tmp"))
+
+
+def test_in_memory_core_returns_structured_result_without_rendering_or_writing(
+    tmp_path: Path,
+    docx_factory: DocxFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resume_path = docx_factory(_resume_document)
+    client = _fake_client()
+
+    def fail(*args: object, **kwargs: object) -> Never:
+        raise AssertionError("In-memory optimization must not render or write outputs.")
+
+    monkeypatch.setattr(pipeline_module, "_render_outputs", fail)
+    monkeypatch.setattr(pipeline_module, "_write_output_batch", fail)
+
+    result = pipeline_module._run_optimization_in_memory(
+        resume_path=resume_path,
+        job_description="  Python is required.  ",
+        model_client=client,
+    )
+
+    assert isinstance(result, OptimizationResult)
+    assert result.output_paths == {}
+    assert result.analysis == _match_analysis()
+    assert result.optimized_resume == _optimized_resume()
+    assert result.warnings == ["duplicate warning", "optimizer warning"]
+    assert [call.response_model for call in client.calls] == [
+        StructuredResume,
+        JobProfile,
+        MatchAnalysis,
+        OptimizedResume,
+    ]
+    assert client.calls[1].input_text == "Python is required."
+    assert list(tmp_path.iterdir()) == [resume_path]
+
+
+def test_runner_optimizes_docx_in_memory(
+    tmp_path: Path,
+    docx_factory: DocxFactory,
+) -> None:
+    resume_path = docx_factory(_resume_document)
+    client = _fake_client()
+
+    result = ResumeOptimizerRunner(client).optimize(
+        resume_path=resume_path,
+        job_description="Python is required.",
+    )
+
+    assert isinstance(result, OptimizationResult)
+    assert result.output_paths == {}
+    assert result.analysis == _match_analysis()
+    assert result.optimized_resume == _optimized_resume()
+    assert list(tmp_path.iterdir()) == [resume_path]
+
+
+def test_runner_optimizes_pdf_in_memory(
+    tmp_path: Path,
+    pdf_factory: PdfFactory,
+) -> None:
+    resume_path = pdf_factory(["Built Python APIs in 2023."])
+    client = _fake_client()
+
+    result = ResumeOptimizerRunner(client).optimize(
+        resume_path=resume_path,
+        job_description="Python is required.",
+    )
+
+    assert isinstance(result, OptimizationResult)
+    assert result.output_paths == {}
+    assert result.analysis == _match_analysis()
+    assert result.optimized_resume == _optimized_resume()
+    assert list(tmp_path.iterdir()) == [resume_path]
+
+
+def test_runner_forwards_exact_inputs_to_shared_core(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resume_path = tmp_path / "resume.docx"
+    job_description = "  Python is required.  "
+    client = FakeModelClient()
+    expected = OptimizationResult(
+        analysis=_match_analysis(),
+        optimized_resume=_optimized_resume(),
+        output_paths={},
+        warnings=[],
+    )
+    received: dict[str, object] = {}
+
+    def run_in_memory(**kwargs: object) -> OptimizationResult:
+        received.update(kwargs)
+        return expected
+
+    monkeypatch.setattr(runner_module, "_run_optimization_in_memory", run_in_memory)
+
+    actual = ResumeOptimizerRunner(client).optimize(
+        resume_path=resume_path,
+        job_description=job_description,
+    )
+
+    assert actual is expected
+    assert received == {
+        "resume_path": resume_path,
+        "job_description": job_description,
+        "model_client": client,
+    }
+    assert not resume_path.exists()
+
+
+def test_runner_close_is_idempotent_and_does_not_close_external_client() -> None:
+    client = _ClosableFakeModelClient()
+    runner = ResumeOptimizerRunner(client)
+
+    runner.close()
+    runner.close()
+
+    assert client.close_calls == 0
+
+
+def test_runner_close_closes_owned_client_once() -> None:
+    client = _ClosableFakeModelClient()
+    runner = ResumeOptimizerRunner(client, owns_model_client=True)
+
+    runner.close()
+    runner.close()
+
+    assert client.close_calls == 1
+
+
+def test_runner_rejects_owned_client_without_close() -> None:
+    with pytest.raises(TypeError, match="must implement close"):
+        ResumeOptimizerRunner(FakeModelClient(), owns_model_client=True)
+
+
+def test_closed_runner_rejects_optimization_before_any_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = ResumeOptimizerRunner(FakeModelClient())
+    runner.close()
+
+    def fail(*args: object, **kwargs: object) -> Never:
+        raise AssertionError("Closed runner must not enter the optimization core.")
+
+    monkeypatch.setattr(runner_module, "_run_optimization_in_memory", fail)
+
+    with pytest.raises(ResumeOptimizerClosedError, match="runner is closed"):
+        runner.optimize(
+            resume_path=tmp_path / "resume.docx",
+            job_description="Python is required.",
+        )
+
+    assert not list(tmp_path.iterdir())
 
 
 def test_pipeline_runs_complete_ordered_flow_and_writes_one_consistent_batch(

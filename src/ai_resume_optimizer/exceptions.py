@@ -7,6 +7,10 @@ class ResumeOptimizerError(Exception):
     exit_code = 1
 
 
+class ResumeOptimizerClosedError(ResumeOptimizerError):
+    """Raised when an optimization is requested after its runner is closed."""
+
+
 class ConfigurationError(ResumeOptimizerError):
     """Raised when required application configuration is invalid."""
 

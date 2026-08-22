@@ -27,6 +27,7 @@ from ai_resume_optimizer.exceptions import (
     ModelOutputError,
     OutputError,
     ResumeExtractionError,
+    ResumeOptimizerClosedError,
     ResumeOptimizerError,
     TruthfulnessError,
     UnsupportedFormatError,
@@ -695,6 +696,7 @@ def test_optimization_result_rejects_unapproved_output_path_key() -> None:
     ("exception_type", "exit_code"),
     [
         (ResumeOptimizerError, 1),
+        (ResumeOptimizerClosedError, 1),
         (ConfigurationError, 4),
         (InputError, 2),
         (UnsupportedFormatError, 2),

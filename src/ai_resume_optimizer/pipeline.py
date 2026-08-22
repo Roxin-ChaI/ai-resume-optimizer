@@ -142,16 +142,14 @@ def _merge_warnings(*warning_groups: list[str]) -> list[str]:
     return merged
 
 
-def run_optimization(
+def _run_optimization_in_memory(
     *,
     resume_path: Path,
     job_description: str,
-    output_dir: Path,
     model_client: ModelClient,
 ) -> OptimizationResult:
-    """Run one complete optimization and atomically write its three outputs."""
+    """Run the optimization workflow without rendering or writing outputs."""
 
-    output_paths = _prepare_output_paths(output_dir)
     normalized_job_description = normalize_job_description(job_description)
     extracted_resume = parse_resume(resume_path)
     structured_resume = structure_resume(extracted_resume, model_client)
@@ -173,15 +171,39 @@ def run_optimization(
         match_analysis,
         optimized_resume,
     )
-    rendered_outputs = _render_outputs(match_analysis, optimized_resume)
-    _write_output_batch(output_paths, rendered_outputs)
 
     return OptimizationResult(
         analysis=match_analysis,
         optimized_resume=optimized_resume,
-        output_paths=output_paths,
+        output_paths={},
         warnings=_merge_warnings(
             extracted_resume.warnings,
             optimized_resume.warnings,
         ),
+    )
+
+
+def run_optimization(
+    *,
+    resume_path: Path,
+    job_description: str,
+    output_dir: Path,
+    model_client: ModelClient,
+) -> OptimizationResult:
+    """Run one complete optimization and atomically write its three outputs."""
+
+    output_paths = _prepare_output_paths(output_dir)
+    result = _run_optimization_in_memory(
+        resume_path=resume_path,
+        job_description=job_description,
+        model_client=model_client,
+    )
+    rendered_outputs = _render_outputs(result.analysis, result.optimized_resume)
+    _write_output_batch(output_paths, rendered_outputs)
+
+    return OptimizationResult(
+        analysis=result.analysis,
+        optimized_resume=result.optimized_resume,
+        output_paths=output_paths,
+        warnings=result.warnings,
     )
