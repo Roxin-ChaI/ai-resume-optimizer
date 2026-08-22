@@ -4,6 +4,11 @@
 
 ### Added
 
+- A stable public Python API with `ResumeOptimizerConfig`,
+  `ResumeOptimizerRunner`, `create_resume_optimizer`, public DTOs, and categorized
+  exceptions.
+- A file-free in-memory optimization path returning `OptimizationResult` with
+  `output_paths == {}` for embedding in other Python applications.
 - PDF and DOCX resume input, plus TXT and interactive job-description input.
 - DeepSeek structured analysis and qualitative resume-to-job matching.
 - Migration to DeepSeek Chat Completions JSON Output with the fixed
@@ -36,5 +41,8 @@
 
 ### Testing
 
+- A controlled Real Public Runner E2E using the fictitious DOCX fixture and
+  `deepseek-v4-flash`, validating the structured result, empty output paths,
+  file-free execution, and owned-client close behavior.
 - Fully offline automated tests that do not call the real DeepSeek API.
 - GitHub Actions quality checks on Python 3.12.

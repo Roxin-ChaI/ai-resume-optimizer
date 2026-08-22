@@ -4,12 +4,12 @@
 
 ## Overview
 
-AI Resume Optimizer is a Python 3.12 command-line tool for evidence-grounded
-resume optimization. It accepts a text-layer PDF or DOCX resume and a target job
-description supplied from a UTF-8 TXT file or pasted interactively. It uses
-DeepSeek Chat Completions JSON Output to analyze the inputs and
-produces an analysis report, an optimized Markdown resume, and an editable DOCX
-resume.
+AI Resume Optimizer is a Python 3.12 library and command-line tool for
+evidence-grounded resume optimization. Its public Python API accepts a text-layer
+PDF or DOCX path plus job-description text and returns a validated, in-memory
+result. The compatible CLI also accepts a UTF-8 TXT job description or interactive
+input and exports an analysis report, an optimized Markdown resume, and an editable
+DOCX resume.
 
 The tool is designed to rewrite conservatively. It must not invent experience,
 skills, employers, education, dates, metrics, or other facts merely to improve a
@@ -26,6 +26,8 @@ match.
 - Blocks unsupported job requirements from being presented as established facts.
 - Requires significant rewrites to be marked for human review.
 - Generates Markdown analysis, Markdown resume, and editable DOCX resume files.
+- Provides a stable in-memory Python runner for embedding the optimizer in other
+  applications without writing files.
 - Refuses to overwrite any existing output file by default.
 - Includes repeatable offline tests using fake model clients.
 
@@ -49,6 +51,10 @@ One optimization run follows this order:
 
 All model responses are validated as explicit Pydantic data models before the
 pipeline uses them.
+
+The public runner performs the in-memory stages without output-path preflight,
+rendering, or file writing. The CLI adds those export responsibilities around the
+same shared optimization core.
 
 ## Requirements
 
@@ -104,6 +110,97 @@ The application does not automatically load `.env` files. The
 [`.env.example`](.env.example) file is a reference template only. Never commit an
 API key to Git.
 
+## Public Python API
+
+Version 0.2.0 provides a stable public integration boundary:
+
+```python
+from pathlib import Path
+
+from ai_resume_optimizer import (
+    ResumeOptimizerConfig,
+    create_resume_optimizer,
+)
+
+config = ResumeOptimizerConfig(
+    deepseek_api_key="replace-with-your-deepseek-api-key",
+)
+runner = create_resume_optimizer(config)
+
+try:
+    result = runner.optimize(
+        resume_path=Path("resume.docx"),
+        job_description="A concise job description.",
+    )
+finally:
+    runner.close()
+```
+
+The public contract includes:
+
+- `ResumeOptimizerConfig`: immutable production configuration. Its representation
+  excludes `deepseek_api_key`.
+- `create_resume_optimizer(config)`: composes the supported DeepSeek client and an
+  owned `ResumeOptimizerRunner`.
+- `ResumeOptimizerRunner`: accepts an injected `ModelClient` and exposes
+  `optimize(...)` and idempotent `close()`.
+- `ModelClient`: the provider-neutral structured-generation dependency-injection
+  protocol.
+- `OptimizationResult`: the validated result returned by the runner.
+- Public DTOs for analysis and optimized-resume content, plus categorized public
+  exceptions rooted at `ResumeOptimizerError`.
+
+`ResumeOptimizerRunner.optimize` accepts only:
+
+- `resume_path: Path`: an existing text-layer PDF or readable DOCX resume. Resume
+  text is limited to 50,000 normalized characters.
+- `job_description: str`: non-empty plain text limited to 30,000 normalized
+  characters.
+
+The result contains `analysis`, `optimized_resume`, `warnings`, and `output_paths`.
+`analysis` exposes `overall_rating`, `overall_evaluation`, requirement
+`assessments`, `main_issues`, `section_suggestions`, `keyword_suggestions`,
+`truthfulness_risks`, and `content_not_to_add`. `optimized_resume` exposes validated
+sections, pending user inputs, and warnings. The API does not invent an ATS score,
+confidence value, token usage, or metrics.
+
+For the public runner, `output_paths == {}`. It does not write Markdown or DOCX,
+create an output directory, or print to standard output. File export remains a
+separate CLI capability.
+
+The runner raises stable domain exceptions such as `InputError`,
+`ResumeExtractionError`, `ModelCallError`, `ModelOutputError`, `TruthfulnessError`,
+and `ResumeOptimizerClosedError`. Embedded callers can catch these exceptions
+without parsing CLI exit text, standard error, or provider-SDK exceptions.
+
+The public runner does not accept resume TXT, bytes, upload objects, URLs, scanned
+PDFs, or OCR input. The CLI can read the job description from a UTF-8 TXT file, but
+the public runner receives job-description text directly as `str`.
+
+## Architecture and Lifecycle
+
+```text
+Application / CLI
+        ↓
+ResumeOptimizerRunner
+        ↓
+in-memory optimization core
+        ↓
+ModelClient
+        ↓
+DeepSeekModelClient
+```
+
+Production composition is
+`ResumeOptimizerConfig → DeepSeekModelClient → owned ResumeOptimizerRunner`.
+Factory-created runners own and close their provider client. A model client passed
+directly to `ResumeOptimizerRunner` is external by default and is not closed by the
+runner. `close()` is idempotent, and optimization after close raises
+`ResumeOptimizerClosedError`.
+
+The in-memory optimization core is separate from Markdown/DOCX rendering and the
+shared atomic file-export step.
+
 ## Usage
 
 Optimize a PDF resume with a TXT job description:
@@ -136,6 +233,18 @@ provided.
 
 There is no `--overwrite` option. If any expected output file already exists,
 the command refuses to run.
+
+The v0.2.0 CLI keeps its existing arguments, environment variables, three output
+files, overwrite protection, and categorized exit codes. Internally its production
+path is now:
+
+```text
+environment
+→ ResumeOptimizerConfig
+→ create_resume_optimizer
+→ ResumeOptimizerRunner.optimize (exactly once)
+→ shared atomic export
+```
 
 ## Output Files
 
@@ -198,10 +307,26 @@ Run the offline test and quality checks:
 .venv/bin/python -m pytest
 .venv/bin/python -m ruff check .
 .venv/bin/python -m ruff format --check .
+.venv/bin/python -m pip check
 ```
 
 Tests inject fake model clients, do not call the real DeepSeek API, and do not
 require a real API key.
+
+The v0.2.0 release baseline is 318 passing offline tests, Ruff passing,
+`ruff format --check` passing, and `pip check` passing. This project does not
+currently configure mypy.
+
+A controlled Real Public Runner E2E also passed with the fictitious
+`examples/sample_resume.docx` fixture and `deepseek-v4-flash`: production factory
+composition passed, the result validated as `OptimizationResult`,
+`output_paths == {}`, no output files were created, and runner close succeeded.
+
+An initial run received an empty model response and was rejected by
+`ModelOutputError`. A subsequent safe metadata diagnostic returned a normal
+`ChatCompletion` response, and the final controlled full E2E passed. This does not
+establish a client bug or provider bug, and v0.2.0 does not add automatic retry,
+backoff, or fallback behavior.
 
 ## Project Structure
 
@@ -215,9 +340,11 @@ ai-resume-optimizer/
             services/
             cli.py
             config.py
+            factory.py
             model_client.py
             models.py
             pipeline.py
+            runner.py
     tests/
         fakes/
         integration/
@@ -244,9 +371,12 @@ ai-resume-optimizer/
 - Generated DOCX files use simple built-in document structures and do not restore
   the source template.
 - Oversized inputs are rejected rather than silently truncated.
+- The public runner does not accept resume TXT, bytes, upload objects, or URLs.
+- Invalid or empty model output is rejected; automatic retry and fallback models
+  are not implemented.
 
 ## Release Status
 
-The project version is `0.1.0`. No Git tag or GitHub Release is created during
+The project version is `0.2.0`. No v0.2.0 Git tag or GitHub Release is created during
 this documentation and validation stage. Release operations will be handled
 separately after the documentation and release checks are approved.
