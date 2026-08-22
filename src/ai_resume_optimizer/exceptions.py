@@ -24,7 +24,7 @@ class InputError(ResumeOptimizerError):
 
 
 class UnsupportedFormatError(InputError):
-    """Raised when an input format is outside the supported v0.1.0 scope."""
+    """Raised when an input format is outside the supported v0.2.0 scope."""
 
 
 class InputTooLargeError(InputError):

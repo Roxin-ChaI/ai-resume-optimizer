@@ -19,7 +19,7 @@ _PDF_LAYOUT_WARNING = "Complex multi-column PDF layouts may not preserve reading
 def _unusable_pdf_error(path: Path) -> ResumeExtractionError:
     return ResumeExtractionError(
         f"PDF '{path}' does not contain enough reliably extractable resume text. "
-        "Scanned PDFs and OCR are not supported in v0.1.0; use a text-layer PDF or DOCX."
+        "Scanned PDFs and OCR are not supported in v0.2.0; use a text-layer PDF or DOCX."
     )
 
 
