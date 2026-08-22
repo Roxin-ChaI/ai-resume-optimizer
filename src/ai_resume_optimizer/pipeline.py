@@ -183,6 +183,22 @@ def _run_optimization_in_memory(
     )
 
 
+def _export_optimization_result(
+    result: OptimizationResult,
+    output_paths: dict[str, Path],
+) -> OptimizationResult:
+    """Render and atomically write one in-memory optimization result."""
+
+    rendered_outputs = _render_outputs(result.analysis, result.optimized_resume)
+    _write_output_batch(output_paths, rendered_outputs)
+    return OptimizationResult(
+        analysis=result.analysis,
+        optimized_resume=result.optimized_resume,
+        output_paths=output_paths,
+        warnings=result.warnings,
+    )
+
+
 def run_optimization(
     *,
     resume_path: Path,
@@ -198,12 +214,4 @@ def run_optimization(
         job_description=job_description,
         model_client=model_client,
     )
-    rendered_outputs = _render_outputs(result.analysis, result.optimized_resume)
-    _write_output_batch(output_paths, rendered_outputs)
-
-    return OptimizationResult(
-        analysis=result.analysis,
-        optimized_resume=result.optimized_resume,
-        output_paths=output_paths,
-        warnings=result.warnings,
-    )
+    return _export_optimization_result(result, output_paths)

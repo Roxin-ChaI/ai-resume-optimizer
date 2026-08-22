@@ -8,14 +8,17 @@ from typing import TextIO
 
 import typer
 
+from ai_resume_optimizer import ResumeOptimizerConfig, create_resume_optimizer
 from ai_resume_optimizer.config import load_settings
 from ai_resume_optimizer.exceptions import InputError, ResumeOptimizerError
-from ai_resume_optimizer.model_client import DeepSeekModelClient
 from ai_resume_optimizer.parsers.job_description import (
     normalize_job_description,
     read_job_description,
 )
-from ai_resume_optimizer.pipeline import run_optimization
+from ai_resume_optimizer.pipeline import (
+    _export_optimization_result,
+    _prepare_output_paths,
+)
 
 app = typer.Typer(
     add_completion=False,
@@ -65,17 +68,22 @@ def _execute_optimization(
         else _read_interactive_job_description()
     )
     settings = load_settings()
-    model_client = DeepSeekModelClient(
-        api_key=settings.deepseek_api_key,
-        model=settings.deepseek_model,
-        timeout_seconds=settings.deepseek_timeout_seconds,
+    config = ResumeOptimizerConfig(
+        deepseek_api_key=settings.deepseek_api_key,
+        deepseek_model=settings.deepseek_model,
+        deepseek_timeout_seconds=settings.deepseek_timeout_seconds,
     )
-    result = run_optimization(
-        resume_path=resume,
-        job_description=job_description,
-        output_dir=output_dir,
-        model_client=model_client,
-    )
+    optimizer = create_resume_optimizer(config)
+    try:
+        output_paths = _prepare_output_paths(output_dir)
+        in_memory_result = optimizer.optimize(
+            resume_path=resume,
+            job_description=job_description,
+        )
+        result = _export_optimization_result(in_memory_result, output_paths)
+    finally:
+        optimizer.close()
+
     typer.echo(f"Analysis report: {result.output_paths['analysis_report']}")
     typer.echo(f"Markdown resume: {result.output_paths['optimized_resume_markdown']}")
     typer.echo(f"DOCX resume: {result.output_paths['optimized_resume_docx']}")
