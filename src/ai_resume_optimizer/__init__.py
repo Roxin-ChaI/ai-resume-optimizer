@@ -35,7 +35,7 @@ from ai_resume_optimizer.models import (
 )
 from ai_resume_optimizer.runner import ResumeOptimizerRunner
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 __all__ = [
     "ConfigurationError",

@@ -98,7 +98,7 @@ export DEEPSEEK_TIMEOUT_SECONDS="60"
 
 ## 公共 Python API
 
-v0.2.0 提供稳定的公共集成边界：
+v0.2.1 提供稳定的公共集成边界：
 
 ```python
 from pathlib import Path
@@ -146,6 +146,26 @@ finally:
 `truthfulness_risks` 与 `content_not_to_add`。`optimized_resume` 包含经过验证的
 sections、待用户补充内容与 warnings。API 不虚构 ATS 数值分数、confidence、token
 usage 或 metrics。
+
+### Public provenance API
+
+Production `RequirementAssessment` 保留原有 `requirement_id`、
+`source_block_ids`、状态、原因和建议操作，并新增：
+
+- `requirement: RequirementReference`：人类可读的岗位要求描述、类别、重要性与岗位
+  描述原文 excerpt。
+- `evidence: list[RequirementEvidence]`：原始 source block 的 kind、location、excerpt
+  及明确的语义 section references。
+
+Requirement provenance 只按稳定 requirement ID 关联。Evidence 按
+`source_block_ids` 原顺序，从原始解析得到的 `SourceBlock` 确定性复制；不会由模型重新
+生成，不会从 optimized resume 反推，也不使用 fuzzy matching。未知 requirement 或
+source block ID 会 fail closed 并抛出 `ModelOutputError`。
+
+这是 v0.2.1 的 additive contract change。Runner API 与 CLI 不变，现有
+`requirement_id`、`source_block_ids` 保持兼容。旧调用方手动构造 DTO 时仍可省略新增
+字段；正常 production Runner result 会填充 requirement reference 与对齐的 evidence
+列表。
 
 公共 Runner 始终返回 `output_paths == {}`，不会写 Markdown、写 DOCX、创建输出目录
 或向标准输出 print。文件导出仍是独立的 CLI 能力。
@@ -211,7 +231,7 @@ ai-resume-optimizer optimize \
 
 工具没有 `--overwrite` 参数。如果任一预期输出文件已经存在，命令会拒绝执行。
 
-v0.2.0 CLI 继续保留原参数、环境变量、三个输出文件、覆盖保护和分类退出码。其内部
+v0.2.1 CLI 继续保留原参数、环境变量、三个输出文件、覆盖保护和分类退出码。其内部
 production 路径已经统一为：
 
 ```text
@@ -282,7 +302,7 @@ environment
 
 测试默认注入 Fake 模型客户端，不调用真实 DeepSeek API，也不需要真实 API key。
 
-v0.2.0 发布基线为：318 个离线测试通过、Ruff 通过、`ruff format --check` 通过、
+v0.2.1 发布基线为：336 个离线测试通过、Ruff 通过、`ruff format --check` 通过、
 `pip check` 通过。项目当前没有配置 mypy。
 
 受控 Real Public Runner E2E 也已通过：使用完全虚构的
@@ -292,7 +312,13 @@ Runner 关闭成功。
 
 首次运行收到空模型响应，并被 `ModelOutputError` 正确拒绝。随后安全 metadata 诊断
 得到正常 `ChatCompletion` 响应，最终受控完整 E2E 通过。这不能证明 client 或 provider
-存在 bug；v0.2.0 未加入自动重试、backoff 或 fallback。
+存在 bug；v0.2.1 未加入自动重试、backoff 或 fallback。
+
+使用同一虚构 fixture 与受支持模型的 Real Public Runner Provenance E2E 也已通过，
+验证了非空的人类可读 requirement reference、原始 evidence excerpt、evidence/source
+ID 顺序完全一致、production provenance invariant、Pydantic round-trip、
+`output_paths == {}`、无文件副作用和幂等关闭。仓库不保存简历、岗位描述、prompt、
+raw model response 或 API key。
 
 ## 项目结构
 
@@ -340,5 +366,5 @@ ai-resume-optimizer/
 
 ## 发布状态
 
-当前项目版本为 `0.2.0`。本次文档与验证阶段尚未创建 v0.2.0 Git 标签或 GitHub Release。
+当前项目版本为 `0.2.1`。本次文档与验证阶段尚未创建 v0.2.1 Git 标签或 GitHub Release。
 发布操作将在文档和发布前检查通过后单独进行。

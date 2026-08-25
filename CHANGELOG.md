@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-25
+
+### Added
+
+- Public `RequirementReference`, `EvidenceSectionReference`, and
+  `RequirementEvidence` DTOs for human-readable requirement and resume-evidence
+  provenance.
+- Deterministic attachment of job requirements and original `SourceBlock` evidence
+  to every production requirement assessment, preserving source-block and semantic
+  section order.
+
+### Compatibility
+
+- The existing Runner API and CLI behavior are unchanged.
+- Existing `RequirementAssessment` fields, including `requirement_id` and
+  `source_block_ids`, remain available and unchanged; the provenance fields are
+  additive and retain legacy-construction defaults.
+- Markdown and DOCX export behavior remains unchanged.
+
+### Validation
+
+- A controlled Real Public Runner Provenance E2E passed with the fictitious DOCX
+  fixture and `deepseek-v4-flash`, validating requirement/evidence alignment,
+  evidence ordering, empty output paths, no file side effects, and runner close.
+- 336 offline tests pass; Ruff, `ruff format --check`, and `pip check` pass.
+
+## [0.2.0] - 2026-08-22
+
 ### Added
 
 - A stable public Python API with `ResumeOptimizerConfig`,
