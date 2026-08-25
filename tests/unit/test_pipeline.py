@@ -24,6 +24,7 @@ from ai_resume_optimizer.exceptions import (
     TruthfulnessError,
 )
 from ai_resume_optimizer.models import (
+    ExtractedResume,
     JobProfile,
     JobRequirement,
     MatchAnalysis,
@@ -32,6 +33,8 @@ from ai_resume_optimizer.models import (
     RequirementAssessment,
     ResumeItem,
     ResumeSection,
+    SourceBlock,
+    SourceBlockKind,
     StructuredResume,
 )
 from ai_resume_optimizer.pipeline import run_optimization
@@ -163,6 +166,207 @@ def _assert_no_output_batch(output_dir: Path) -> None:
         assert not list(output_dir.glob("*.tmp"))
 
 
+def _assert_assessment_provenance(
+    analysis: MatchAnalysis,
+    *,
+    location: str,
+) -> None:
+    assessment = analysis.assessments[0]
+    assert assessment.requirement is not None
+    assert assessment.requirement.requirement_id == "requirement-0001"
+    assert assessment.requirement.description == "Python"
+    assert assessment.requirement.category == "core_skill"
+    assert assessment.requirement.importance == "required"
+    assert assessment.requirement.source_excerpt == "Python"
+    assert len(assessment.evidence) == len(assessment.source_block_ids) == 1
+    assert assessment.evidence[0].source_block_id == "block-0001"
+    assert assessment.evidence[0].kind == "paragraph"
+    assert assessment.evidence[0].location == location
+    assert assessment.evidence[0].excerpt == "Built Python APIs in 2023."
+    assert [section.title for section in assessment.evidence[0].sections] == ["Experience"]
+
+
+def _source_block(
+    block_id: str,
+    text: str,
+    *,
+    kind: SourceBlockKind = "paragraph",
+    location: str = "page:1",
+) -> SourceBlock:
+    return SourceBlock(
+        block_id=block_id,
+        text=text,
+        kind=kind,
+        location=location,
+    )
+
+
+def _extracted_resume(blocks: list[SourceBlock]) -> ExtractedResume:
+    return ExtractedResume(
+        source_path=Path("resume.pdf"),
+        source_format="pdf",
+        blocks=blocks,
+        plain_text="\n\n".join(block.text for block in blocks),
+        warnings=[],
+    )
+
+
+def test_attach_requirement_provenance_preserves_evidence_and_section_order() -> None:
+    blocks = [
+        _source_block("block-0001", "Python and FastAPI", kind="list_item"),
+        _source_block("block-0002", "Unclassified detail", location="page:2"),
+        _source_block("block-0003", "Built REST APIs", location="page:3"),
+    ]
+    structured_resume = StructuredResume(
+        sections=[
+            ResumeSection(
+                section_type="experience",
+                title="Experience",
+                items=[
+                    ResumeItem(
+                        text="Built REST APIs with Python and FastAPI",
+                        source_block_ids=["block-0003", "block-0001"],
+                        related_requirement_ids=[],
+                        needs_review=False,
+                        review_note=None,
+                    )
+                ],
+                source_block_ids=["block-0003", "block-0001"],
+            ),
+            ResumeSection(
+                section_type="skills",
+                title="Skills",
+                items=[
+                    ResumeItem(
+                        text="Python and FastAPI",
+                        source_block_ids=["block-0001"],
+                        related_requirement_ids=[],
+                        needs_review=False,
+                        review_note=None,
+                    )
+                ],
+                source_block_ids=["block-0001"],
+            ),
+        ],
+        unclassified_content=[
+            ResumeItem(
+                text="Unclassified detail",
+                source_block_ids=["block-0002"],
+                related_requirement_ids=[],
+                needs_review=False,
+                review_note=None,
+            )
+        ],
+        warnings=[],
+    )
+    assessment = (
+        _match_analysis()
+        .assessments[0]
+        .model_copy(update={"source_block_ids": ["block-0003", "block-0001", "block-0002"]})
+    )
+    analysis = _match_analysis().model_copy(update={"assessments": [assessment]})
+    before = analysis.model_dump()
+
+    enriched = pipeline_module._attach_requirement_provenance(
+        analysis,
+        job_profile=_job_profile(),
+        extracted_resume=_extracted_resume(blocks),
+        structured_resume=structured_resume,
+    )
+
+    enriched_assessment = enriched.assessments[0]
+    assert analysis.model_dump() == before
+    assert enriched_assessment.requirement is not None
+    assert enriched_assessment.requirement.model_dump() == {
+        "requirement_id": "requirement-0001",
+        "description": "Python",
+        "category": "core_skill",
+        "importance": "required",
+        "source_excerpt": "Python",
+    }
+    assert [item.source_block_id for item in enriched_assessment.evidence] == [
+        "block-0003",
+        "block-0001",
+        "block-0002",
+    ]
+    assert [item.excerpt for item in enriched_assessment.evidence] == [
+        "Built REST APIs",
+        "Python and FastAPI",
+        "Unclassified detail",
+    ]
+    assert enriched_assessment.evidence[0].location == "page:3"
+    assert enriched_assessment.evidence[1].kind == "list_item"
+    assert [section.title for section in enriched_assessment.evidence[1].sections] == [
+        "Experience",
+        "Skills",
+    ]
+    assert enriched_assessment.evidence[2].sections == []
+
+
+def test_attach_requirement_provenance_fails_for_unknown_requirement(
+    tmp_path: Path,
+) -> None:
+    assessment = (
+        _match_analysis().assessments[0].model_copy(update={"requirement_id": "requirement-9999"})
+    )
+    analysis = _match_analysis().model_copy(update={"assessments": [assessment]})
+
+    with pytest.raises(ModelOutputError, match="requirement-9999"):
+        pipeline_module._attach_requirement_provenance(
+            analysis,
+            job_profile=_job_profile(),
+            extracted_resume=_extracted_resume(
+                [_source_block("block-0001", "Built Python APIs in 2023.")]
+            ),
+            structured_resume=_structured_resume(),
+        )
+
+    assert not list(tmp_path.iterdir())
+
+
+def test_attach_requirement_provenance_allows_unsupported_without_evidence() -> None:
+    assessment = (
+        _match_analysis()
+        .assessments[0]
+        .model_copy(update={"status": "unsupported", "source_block_ids": []})
+    )
+    analysis = _match_analysis().model_copy(update={"assessments": [assessment]})
+
+    enriched = pipeline_module._attach_requirement_provenance(
+        analysis,
+        job_profile=_job_profile(),
+        extracted_resume=_extracted_resume(
+            [_source_block("block-0001", "Built Python APIs in 2023.")]
+        ),
+        structured_resume=_structured_resume(),
+    )
+
+    assert enriched.assessments[0].requirement is not None
+    assert enriched.assessments[0].source_block_ids == []
+    assert enriched.assessments[0].evidence == []
+
+
+def test_attach_requirement_provenance_fails_for_unknown_source_block(
+    tmp_path: Path,
+) -> None:
+    assessment = (
+        _match_analysis().assessments[0].model_copy(update={"source_block_ids": ["block-missing"]})
+    )
+    analysis = _match_analysis().model_copy(update={"assessments": [assessment]})
+
+    with pytest.raises(ModelOutputError, match="block-missing"):
+        pipeline_module._attach_requirement_provenance(
+            analysis,
+            job_profile=_job_profile(),
+            extracted_resume=_extracted_resume(
+                [_source_block("block-0001", "Built Python APIs in 2023.")]
+            ),
+            structured_resume=_structured_resume(),
+        )
+
+    assert not list(tmp_path.iterdir())
+
+
 def test_in_memory_core_returns_structured_result_without_rendering_or_writing(
     tmp_path: Path,
     docx_factory: DocxFactory,
@@ -185,7 +389,7 @@ def test_in_memory_core_returns_structured_result_without_rendering_or_writing(
 
     assert isinstance(result, OptimizationResult)
     assert result.output_paths == {}
-    assert result.analysis == _match_analysis()
+    _assert_assessment_provenance(result.analysis, location="body:block:1")
     assert result.optimized_resume == _optimized_resume()
     assert result.warnings == ["duplicate warning", "optimizer warning"]
     assert [call.response_model for call in client.calls] == [
@@ -212,7 +416,7 @@ def test_runner_optimizes_docx_in_memory(
 
     assert isinstance(result, OptimizationResult)
     assert result.output_paths == {}
-    assert result.analysis == _match_analysis()
+    _assert_assessment_provenance(result.analysis, location="body:block:1")
     assert result.optimized_resume == _optimized_resume()
     assert list(tmp_path.iterdir()) == [resume_path]
 
@@ -231,7 +435,7 @@ def test_runner_optimizes_pdf_in_memory(
 
     assert isinstance(result, OptimizationResult)
     assert result.output_paths == {}
-    assert result.analysis == _match_analysis()
+    _assert_assessment_provenance(result.analysis, location="page:1")
     assert result.optimized_resume == _optimized_resume()
     assert list(tmp_path.iterdir()) == [resume_path]
 
@@ -353,7 +557,7 @@ def test_pipeline_runs_complete_ordered_flow_and_writes_one_consistent_batch(
         "optimized_resume_markdown",
         "optimized_resume_docx",
     }
-    assert result.analysis == _match_analysis()
+    _assert_assessment_provenance(result.analysis, location="body:block:1")
     assert result.optimized_resume == _optimized_resume()
     assert result.warnings == [
         "parser warning",

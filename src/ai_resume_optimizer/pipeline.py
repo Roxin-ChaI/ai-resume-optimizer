@@ -6,9 +6,19 @@ from collections.abc import Iterable
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from ai_resume_optimizer.exceptions import OutputError
+from ai_resume_optimizer.exceptions import ModelOutputError, OutputError
 from ai_resume_optimizer.model_client import ModelClient
-from ai_resume_optimizer.models import MatchAnalysis, OptimizationResult, OptimizedResume
+from ai_resume_optimizer.models import (
+    EvidenceSectionReference,
+    ExtractedResume,
+    JobProfile,
+    MatchAnalysis,
+    OptimizationResult,
+    OptimizedResume,
+    RequirementEvidence,
+    RequirementReference,
+    StructuredResume,
+)
 from ai_resume_optimizer.parsers import parse_resume
 from ai_resume_optimizer.parsers.job_description import normalize_job_description
 from ai_resume_optimizer.renderers import (
@@ -142,6 +152,75 @@ def _merge_warnings(*warning_groups: list[str]) -> list[str]:
     return merged
 
 
+def _attach_requirement_provenance(
+    match_analysis: MatchAnalysis,
+    *,
+    job_profile: JobProfile,
+    extracted_resume: ExtractedResume,
+    structured_resume: StructuredResume,
+) -> MatchAnalysis:
+    """Attach deterministic job and source references to every assessment."""
+
+    requirements_by_id = {
+        requirement.requirement_id: requirement for requirement in job_profile.requirements
+    }
+    source_blocks_by_id = {
+        source_block.block_id: source_block for source_block in extracted_resume.blocks
+    }
+    sections_by_source_block_id: dict[str, list[EvidenceSectionReference]] = {}
+    for section in structured_resume.sections:
+        reference = EvidenceSectionReference(
+            section_type=section.section_type,
+            title=section.title,
+        )
+        for source_block_id in section.source_block_ids:
+            sections_by_source_block_id.setdefault(source_block_id, []).append(reference)
+
+    enriched_assessments = []
+    for assessment in match_analysis.assessments:
+        requirement = requirements_by_id.get(assessment.requirement_id)
+        if requirement is None:
+            raise ModelOutputError(
+                f"Match assessment references unknown job requirement "
+                f"{assessment.requirement_id!r}."
+            )
+
+        evidence = []
+        for source_block_id in assessment.source_block_ids:
+            source_block = source_blocks_by_id.get(source_block_id)
+            if source_block is None:
+                raise ModelOutputError(
+                    f"Match assessment {assessment.requirement_id!r} references "
+                    f"unknown source block ID {source_block_id!r}."
+                )
+            evidence.append(
+                RequirementEvidence(
+                    source_block_id=source_block.block_id,
+                    kind=source_block.kind,
+                    location=source_block.location,
+                    excerpt=source_block.text,
+                    sections=list(sections_by_source_block_id.get(source_block_id, [])),
+                )
+            )
+
+        enriched_assessments.append(
+            assessment.model_copy(
+                update={
+                    "requirement": RequirementReference(
+                        requirement_id=requirement.requirement_id,
+                        description=requirement.description,
+                        category=requirement.category,
+                        importance=requirement.importance,
+                        source_excerpt=requirement.source_excerpt,
+                    ),
+                    "evidence": evidence,
+                }
+            )
+        )
+
+    return match_analysis.model_copy(update={"assessments": enriched_assessments})
+
+
 def _run_optimization_in_memory(
     *,
     resume_path: Path,
@@ -171,9 +250,15 @@ def _run_optimization_in_memory(
         match_analysis,
         optimized_resume,
     )
+    enriched_match_analysis = _attach_requirement_provenance(
+        match_analysis,
+        job_profile=job_profile,
+        extracted_resume=extracted_resume,
+        structured_resume=structured_resume,
+    )
 
     return OptimizationResult(
-        analysis=match_analysis,
+        analysis=enriched_match_analysis,
         optimized_resume=optimized_resume,
         output_paths={},
         warnings=_merge_warnings(
