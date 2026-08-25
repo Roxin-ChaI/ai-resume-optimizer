@@ -19,12 +19,19 @@ from ai_resume_optimizer.factory import (
 )
 from ai_resume_optimizer.model_client import ModelClient
 from ai_resume_optimizer.models import (
+    EvidenceSectionReference,
     MatchAnalysis,
     OptimizationResult,
     OptimizedResume,
     RequirementAssessment,
+    RequirementCategory,
+    RequirementEvidence,
+    RequirementImportance,
+    RequirementReference,
     ResumeItem,
     ResumeSection,
+    SectionType,
+    SourceBlockKind,
 )
 from ai_resume_optimizer.runner import ResumeOptimizerRunner
 
@@ -32,6 +39,7 @@ __version__ = "0.2.0"
 
 __all__ = [
     "ConfigurationError",
+    "EvidenceSectionReference",
     "InputError",
     "InputTooLargeError",
     "MatchAnalysis",
@@ -42,6 +50,10 @@ __all__ = [
     "OptimizedResume",
     "OutputError",
     "RequirementAssessment",
+    "RequirementCategory",
+    "RequirementEvidence",
+    "RequirementImportance",
+    "RequirementReference",
     "ResumeExtractionError",
     "ResumeItem",
     "ResumeOptimizerConfig",
@@ -49,6 +61,8 @@ __all__ = [
     "ResumeOptimizerError",
     "ResumeOptimizerRunner",
     "ResumeSection",
+    "SectionType",
+    "SourceBlockKind",
     "TruthfulnessError",
     "UnsupportedFormatError",
     "__version__",

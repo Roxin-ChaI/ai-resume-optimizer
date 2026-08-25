@@ -33,6 +33,7 @@ from ai_resume_optimizer.exceptions import (
     UnsupportedFormatError,
 )
 from ai_resume_optimizer.models import (
+    EvidenceSectionReference,
     ExtractedResume,
     JobProfile,
     JobRequirement,
@@ -40,6 +41,8 @@ from ai_resume_optimizer.models import (
     OptimizationResult,
     OptimizedResume,
     RequirementAssessment,
+    RequirementEvidence,
+    RequirementReference,
     ResumeItem,
     ResumeSection,
     SourceBlock,
@@ -114,6 +117,29 @@ def make_assessment(
         source_block_ids=source_block_ids,
         reason="The resume contains supporting evidence.",
         suggested_action="Keep the evidence prominent.",
+    )
+
+
+def make_requirement_reference() -> RequirementReference:
+    return RequirementReference(
+        requirement_id="requirement-0001",
+        description="Professional Python experience",
+        category="experience",
+        importance="required",
+        source_excerpt="professional experience using Python",
+    )
+
+
+def make_requirement_evidence() -> RequirementEvidence:
+    return RequirementEvidence(
+        source_block_id="block-0001",
+        kind="list_item",
+        location="body:block:3",
+        excerpt="Built reliable Python APIs.",
+        sections=[
+            EvidenceSectionReference(section_type="experience", title="Experience"),
+            EvidenceSectionReference(section_type="projects", title="Projects"),
+        ],
     )
 
 
@@ -597,6 +623,118 @@ def test_job_profile_rejects_empty_or_duplicate_requirements() -> None:
             role_summary="Backend role",
             requirements=[make_requirement(), make_requirement()],
         )
+
+
+def test_requirement_reference_accepts_public_requirement_fields() -> None:
+    reference = make_requirement_reference()
+
+    assert reference.requirement_id == "requirement-0001"
+    assert reference.description == "Professional Python experience"
+    assert reference.category == "experience"
+    assert reference.importance == "required"
+    assert reference.source_excerpt == "professional experience using Python"
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["requirement_id", "description", "source_excerpt"],
+)
+def test_requirement_reference_rejects_blank_strings(field_name: str) -> None:
+    payload = make_requirement_reference().model_dump()
+    payload[field_name] = "  "
+
+    with pytest.raises(ValidationError):
+        RequirementReference.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [("category", "unknown"), ("importance", "mandatory")],
+)
+def test_requirement_reference_rejects_unknown_enum_values(
+    field_name: str,
+    invalid_value: str,
+) -> None:
+    payload = make_requirement_reference().model_dump()
+    payload[field_name] = invalid_value
+
+    with pytest.raises(ValidationError):
+        RequirementReference.model_validate(payload)
+
+
+def test_evidence_section_reference_validates_section_and_title() -> None:
+    section = EvidenceSectionReference(section_type="skills", title="Skills")
+
+    assert section.section_type == "skills"
+    assert section.title == "Skills"
+    with pytest.raises(ValidationError):
+        EvidenceSectionReference(section_type="skills", title="  ")
+    with pytest.raises(ValidationError):
+        EvidenceSectionReference(section_type="unknown", title="Other")  # type: ignore[arg-type]
+
+
+def test_requirement_evidence_preserves_section_order() -> None:
+    evidence = make_requirement_evidence()
+
+    assert evidence.source_block_id == "block-0001"
+    assert evidence.kind == "list_item"
+    assert evidence.location == "body:block:3"
+    assert evidence.excerpt == "Built reliable Python APIs."
+    assert [section.section_type for section in evidence.sections] == [
+        "experience",
+        "projects",
+    ]
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["source_block_id", "location", "excerpt"],
+)
+def test_requirement_evidence_rejects_blank_strings(field_name: str) -> None:
+    payload = make_requirement_evidence().model_dump()
+    payload[field_name] = " "
+
+    with pytest.raises(ValidationError):
+        RequirementEvidence.model_validate(payload)
+
+
+def test_requirement_evidence_rejects_unknown_kind() -> None:
+    payload = make_requirement_evidence().model_dump()
+    payload["kind"] = "unknown"
+
+    with pytest.raises(ValidationError):
+        RequirementEvidence.model_validate(payload)
+
+
+def test_requirement_assessment_legacy_payload_uses_provenance_defaults() -> None:
+    payload = make_assessment().model_dump(exclude={"requirement", "evidence"})
+
+    assessment = RequirementAssessment.model_validate(payload)
+
+    assert assessment.requirement is None
+    assert assessment.evidence == []
+    assert assessment.requirement_id == "req-0001"
+    assert assessment.source_block_ids == ["block-0001"]
+
+
+def test_requirement_assessment_accepts_and_round_trips_provenance() -> None:
+    assessment = RequirementAssessment(
+        requirement_id="requirement-0001",
+        status="well_supported",
+        source_block_ids=["block-0001"],
+        reason="The resume contains direct evidence.",
+        suggested_action="Keep the evidence prominent.",
+        requirement=make_requirement_reference(),
+        evidence=[make_requirement_evidence()],
+    )
+
+    round_trip = RequirementAssessment.model_validate(assessment.model_dump())
+
+    assert round_trip == assessment
+    assert round_trip.requirement == make_requirement_reference()
+    assert round_trip.evidence == [make_requirement_evidence()]
+    assert round_trip.requirement_id == "requirement-0001"
+    assert round_trip.source_block_ids == ["block-0001"]
 
 
 @pytest.mark.parametrize(

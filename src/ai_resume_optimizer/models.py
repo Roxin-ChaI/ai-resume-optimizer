@@ -249,6 +249,33 @@ class JobProfile(StrictModel):
         return self
 
 
+class RequirementReference(StrictModel):
+    """Human-readable details for one job requirement."""
+
+    requirement_id: NonEmptyString
+    description: NonEmptyString
+    category: RequirementCategory
+    importance: RequirementImportance
+    source_excerpt: NonEmptyString
+
+
+class EvidenceSectionReference(StrictModel):
+    """A semantic resume section associated with one source block."""
+
+    section_type: SectionType
+    title: NonEmptyString
+
+
+class RequirementEvidence(StrictModel):
+    """Original resume evidence supporting one requirement assessment."""
+
+    source_block_id: NonEmptyString
+    kind: SourceBlockKind
+    location: NonEmptyString
+    excerpt: NonEmptyString
+    sections: list[EvidenceSectionReference]
+
+
 class RequirementAssessment(StrictModel):
     """An evidence-aware assessment of one job requirement."""
 
@@ -257,6 +284,8 @@ class RequirementAssessment(StrictModel):
     source_block_ids: list[str]
     reason: NonEmptyString
     suggested_action: NonEmptyString
+    requirement: RequirementReference | None = None
+    evidence: list[RequirementEvidence] = Field(default_factory=list)
 
     @field_validator("source_block_ids", mode="before")
     @classmethod
